@@ -1,0 +1,8 @@
+
+liste api
+=> dans postman
+=> http://localhost/prestashop_edition_classic_version_8.2.6/api
+=> https://devdocs.prestashop-project.org/8/webservice/resources/products/
+=> https://devdocs.prestashop-project.org/8/webservice/
+
+?schema=synopsis 

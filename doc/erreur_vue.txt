@@ -1,0 +1,58 @@
+1. L'analyse de ton erreur
+L'erreur Cannot read properties of null (reading 'products') signifie que ton code essaie d'accéder à produits.products alors que produits vaut encore null.
+
+Pourquoi ?
+
+Dans ton <script setup>, tu as défini const produits = ref(null);.
+
+L'appel API prend quelques millisecondes pour arriver.
+
+Pendant ce temps, Vue essaie d'afficher le template. Il voit produits.products. Comme produits est encore null, il plante avant même que les données n'arrivent.
+
+La solution :
+Il faut utiliser un v-if ou l'opérateur de chaînage optionnel ?..
+Dans ton template, remplace ta ligne par :
+
+HTML
+<pre v-if="produits">{{ produits.products }}</pre>
+<pre>{{ produits?.products }}</pre>
+2. Apprendre à identifier les bugs (La méthode "Détective")
+Pour devenir autonome, tu dois regarder à trois endroits précis :
+
+A. La Console du Navigateur (F12 -> Console)
+C'est là que tu vois les erreurs de syntaxe et d'exécution (comme celle que tu as eue).
+
+TypeError / ReferenceError : Souvent un problème de variable mal nommée ou une variable null qu'on essaie de lire.
+
+401 Unauthorized : Ta clé API PrestaShop est mauvaise ou mal configurée.
+
+404 Not Found : Ton BASE_URL est faux.
+
+CORS Error : Ton navigateur bloque la requête pour des raisons de sécurité (il faut autoriser les headers dans PrestaShop).
+
+B. L'onglet Réseau (F12 -> Network)
+C'est le plus important pour le travail avec les API.
+
+Regarde la ligne qui correspond à ton appel (products?display=full).
+
+Status : Si c'est 200, c'est que l'API a répondu. Si c'est rouge, il y a un souci.
+
+Response : Clique dessus. Tu verras le XML exact envoyé par PrestaShop. Si tu ne vois pas ce que tu attends ici, le bug est dans ton URL ou ta config PrestaShop, pas dans ton code Vue.
+
+C. Les logs du terminal (Ton éditeur de code / Node.js)
+Si tu crées ton propre serveur (Express par exemple), c'est ici que tu verras les erreurs.
+
+Si le terminal s'arrête brusquement avec un message rouge, c'est souvent une faute de frappe ou un package manquant.
+
+3. Tes réflexes de "Bug Hunter"
+Quand ça ne marche pas, pose-toi ces 3 questions dans l'ordre :
+
+Est-ce que la donnée arrive ? Mets un console.log(data) juste après l'appel API dans ton service. Si rien ne s'affiche en console, le bug est dans l'appel.
+
+Quelle est la forme de ma donnée ?
+Parfois on croit recevoir un tableau [] mais on reçoit un objet {}. Vérifie toujours avec un console.log(typeof maVariable).
+
+Est-ce que j'essaie d'afficher trop vite ?
+C'est ton cas ici. Toujours prévoir un état "Chargement" (loading = true) tant que la réponse n'est pas là.
+
+Astuce d'expert : Utilise l'extension Vue DevTools sur Chrome. Elle te permet de voir en temps réel tes variables ref et de vérifier si elles se remplissent correctement sans avoir à faire plein de console.log.
