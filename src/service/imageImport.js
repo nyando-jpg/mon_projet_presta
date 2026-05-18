@@ -1,4 +1,4 @@
-import { getXml, postImage } from '@/service/api';
+import { getXml, postImage } from './api';
 import JSZip from 'jszip';
 
 /**

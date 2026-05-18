@@ -85,6 +85,26 @@ const router = createRouter({
       name: 'ListePaniers',
       component: () => import('../views/back/PanierList.vue')
     },
+    {
+      path: '/backend/stocks',
+      name: 'StockManagement',
+      component: () => import('../views/back/StockManagement.vue')
+    },
+    {
+      path: '/backend/historique-mouvements',
+      name: 'StockMovementsHistory',
+      component: () => import('../views/back/StockMovementsHistory.vue')
+    },
+    {
+      path: '/backend/synthese-stocks',
+      name: 'StockOverview',
+      component: () => import('../views/back/StockOverview.vue')
+    },
+    {
+      path: '/backend/marges-produits',
+      name: 'ProductMargins',
+      component: () => import('../views/back/ProductMargins.vue')
+    },
 
 
         {

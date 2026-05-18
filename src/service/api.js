@@ -1,32 +1,28 @@
 import axios from 'axios';
-import { XMLParser } from 'fast-xml-parser';
-import XMLBuilder from 'fast-xml-builder';
+import { XMLParser, XMLBuilder } from 'fast-xml-parser';
+
 
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
-const BASE_URL = 'http://localhost/prestashop_edition_classic_version_8.2.6/api';
+const BASE_URL = 'http://localhost/prestashop1/api';
 
-// const urlBase = import.meta.env.VITE_API_URL;
-// const apiKey = import.meta.env.VITE_API_KEY;
-
-const urlBase = 'http://localhost/prestashop_edition_classic_version_8.2.6/api';
-const apiKey = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W'; // Replace with actual API key
+// Default to the Vite proxy path if no explicit API URL is provided in env.
+const urlBase = 'http://localhost/prestashop1/api';
+const apiKey = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
 const basicAuthHeader = `Basic ${btoa(`${apiKey}:`)}`;
 
 export const api = axios.create({
   // Utilise l'URL exacte qui fonctionne
   baseURL: urlBase,
-  headers: {
-    Authorization: basicAuthHeader
-  },
   params: {
+    ws_key: apiKey,
     output_format: 'JSON'
   }
 });
 
 const rawApi = axios.create({
   baseURL: urlBase,
-  headers: {
-    Authorization: basicAuthHeader
+  params: {
+    ws_key: apiKey
   }
 });
 
@@ -35,8 +31,8 @@ const rawApiNoAuth = axios.create({
 });
 
 const rawNoBaseAuth = axios.create({
-  headers: {
-    Authorization: basicAuthHeader
+  params: {
+    ws_key: apiKey
   }
 });
 
@@ -67,6 +63,46 @@ function parseXmlSafe(xml) {
 
 function parseResponseData(data) {
   return isXmlString(data) ? parseXmlSafe(data) : data;
+}
+
+function readNodeValue(node) {
+  if (node == null) return '';
+  if (typeof node === 'object') {
+    if ('#text' in node) return String(node['#text']);
+    if ('@_id' in node) return String(node['@_id']);
+    if ('id' in node) return readNodeValue(node.id);
+    return '';
+  }
+  return String(node);
+}
+
+function normalizeStockAvailablePayload(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+
+  const stock = payload?.prestashop?.stock_available;
+  if (!stock || typeof stock !== 'object') return payload;
+
+  const normalized = {
+    id: readNodeValue(stock.id),
+    id_product: readNodeValue(stock.id_product),
+    id_product_attribute: readNodeValue(stock.id_product_attribute),
+    id_shop: readNodeValue(stock.id_shop),
+    id_shop_group: readNodeValue(stock.id_shop_group),
+    quantity: readNodeValue(stock.quantity) || '0',
+    depends_on_stock: readNodeValue(stock.depends_on_stock) || '0',
+    out_of_stock: readNodeValue(stock.out_of_stock) || '2'
+  };
+
+  // If required identifiers are missing, keep caller payload untouched.
+  if (!normalized.id || !normalized.id_product) {
+    return payload;
+  }
+
+  return {
+    prestashop: {
+      stock_available: normalized
+    }
+  };
 }
 
 export function parsePrestaXml(xmlString) {
@@ -153,7 +189,10 @@ export const postXml = async (url, payload, config) => {
 };
 
 export async function putXml(url, payload, config) {
-  const body = buildPrestaXml(payload);
+  const normalizedPayload = url.includes('/stock_availables')
+    ? normalizeStockAvailablePayload(payload)
+    : payload;
+  const body = buildPrestaXml(normalizedPayload);
   const client = getClient(config);
   const response = await client.put(url, body, {
     ...withXmlDefaults(config),
@@ -168,20 +207,8 @@ export async function putXml(url, payload, config) {
 
 export async function deleteXml(url, config) {
   const client = getClient(config);
-  try {
-    const response = await client.delete(url, withXmlDefaults(config));
-    return parseResponseData(response.data);
-  } catch (error) {
-    const fallbackClient = getClient({ ...config, skipApiParams: true });
-    const fallbackResponse = await fallbackClient.delete(url, {
-      responseType: 'text',
-      headers: {
-        ...(config?.headers || {}),
-        Accept: 'application/xml'
-      }
-    });
-    return parseResponseData(fallbackResponse.data);
-  }
+  const response = await client.delete(url, withXmlDefaults(config));
+  return parseResponseData(response.data);
 }
 
 export async function getImage(url) {
@@ -209,9 +236,13 @@ export async function postImage(url, imageFile) {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
-    params: {},
     responseType: 'text'
   });
   return parseResponseData(response.data);
-  88
+}
+
+export async function getPrestaShopConfig(name) {
+  const response = await getXml(`/configurations?display=full&filter[name]=[${name}]`);
+  const config = response?.prestashop?.configurations?.configuration;
+  return Array.isArray(config) ? config[0] : config;
 }

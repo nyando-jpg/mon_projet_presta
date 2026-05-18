@@ -1,6 +1,6 @@
-import { getXml, postXml, putXml } from '@/service/api';
-import { runResetForTargets } from '@/service/resetService';
-import { resetTargets } from '@/service/resetTargets';
+import { getXml, postXml, putXml } from './api';
+import { runResetForTargets } from './resetService';
+import { resetTargets } from './resetTargets';
 
 export const resetDeclinaisonTargets = [
   {
@@ -45,11 +45,96 @@ export const rollbackProducts = async (logCallback) => {
   logCallback('info', 'Réinitialisation terminée. L\'import a été annulé.');
 };
 
+/**
+ * Synchronise le stock parent (id_product_attribute = 0) avec la SOMME des déclinaisons.
+ * Crucial : PrestaShop ignore la ligne parent si elle n'est pas synchronisée avec les déclinaisons.
+ */
+const syncParentStockQuantity = async (parentProductId, logCallback) => {
+  try {
+    logCallback('info', `Synchronisation du stock parent pour le produit ${parentProductId}...`);
+    
+    // 1. Récupère TOUS les stock_availables du produit
+    const stockResp = await getXml(
+      `/stock_availables?filter[id_product]=[${parentProductId}]&display=full`
+    );
+    
+    if (!stockResp?.prestashop?.stock_availables) {
+      logCallback('warn', `Aucun stock trouvé pour le produit ${parentProductId}.`);
+      return;
+    }
+    
+    let stocks = stockResp.prestashop.stock_availables.stock_available;
+    if (!Array.isArray(stocks)) {
+      stocks = stocks ? [stocks] : [];
+    }
+    
+    // 2. Calcule la somme des déclinaisons (exclut id_product_attribute = 0)
+    // IMPORTANT : compte UNIQUEMENT les déclinaisons avec id_shop_group = 1 (pas 0)
+    const totalQuantity = stocks
+      .filter(s => {
+        const attr = String(s.id_product_attribute || '0');
+        const shopGroup = String(s.id_shop_group || '0');
+        return attr !== '0' && shopGroup === '1';
+      })
+      .reduce((sum, s) => sum + parseInt(s.quantity || 0), 0);
+    
+    logCallback('info', `Quantité totale des déclinaisons (id_shop_group=1) : ${totalQuantity}`);
+    
+    // 3. Trouve ou crée la ligne parente (id_product_attribute = 0)
+    const parentStock = stocks.find(s => String(s.id_product_attribute || '0') === '0');
+    
+    if (parentStock) {
+      // Mise à jour de la ligne parente existante
+      const stockPayload = {
+        prestashop: {
+          stock_available: {
+            id: parentStock.id,
+            id_product: parentStock.id_product,
+            id_product_attribute: '0',
+            id_shop: parentStock.id_shop,
+            id_shop_group: parentStock.id_shop_group,
+            quantity: totalQuantity,
+            depends_on_stock: parentStock.depends_on_stock || 0,
+            out_of_stock: parentStock.out_of_stock || 2
+          }
+        }
+      };
+      
+      await putXml('/stock_availables', stockPayload);
+      logCallback('success', `Stock parent synchronisé (quantité: ${totalQuantity})`);
+    } else {
+      // Crée une nouvelle ligne parente si elle n'existe pas
+      // NOTE: La ligne parente DOIT avoir id_shop_group = 0 (configuration globale)
+      logCallback('info', `Création de la ligne de stock parent...`);
+      
+      const stockPayload = {
+        prestashop: {
+          stock_available: {
+            id_product: parentProductId,
+            id_product_attribute: '0',
+            id_shop: 1,
+            id_shop_group: 0,
+            quantity: totalQuantity,
+            depends_on_stock: 0,
+            out_of_stock: 2
+          }
+        }
+      };
+      
+      await postXml('/stock_availables', stockPayload);
+      logCallback('success', `Ligne de stock parent créée (quantité: ${totalQuantity}, id_shop_group=0)`);
+    }
+  } catch (error) {
+    logCallback('error', `Erreur synchronisation stock parent: ${error.message}`);
+  }
+};
+
 export const processVariantImport = async (data, logCallback) => {
   const optionGroupCache = {};
   const optionValueCache = {};
   const parentProductCache = {};
   const taxRateCache = {};
+  const parentProductsToSync = new Set();
 
   try {
     for (const [index, row] of data.entries()) {
@@ -61,8 +146,88 @@ export const processVariantImport = async (data, logCallback) => {
       const stockInitialRaw = row.stock_initial || '0';
       const stockInitial = parseInt(stockInitialRaw, 10);
       
-      if (!reference || !specificite || !karazany) {
-        logCallback('error', `Ligne ${index + 1} ignorée : données incomplètes.`);
+      if (!reference) {
+        logCallback('error', `Ligne ${index + 1} ignorée : pas de référence produit.`);
+        continue;
+      }
+
+      // ========================================================================
+      // TRAITEMENT SPÉCIAL: Produits SIMPLES (sans variantes)
+      // Si specificité ET karazany sont vides = produit simple
+      // ========================================================================
+      if (!specificite && !karazany) {
+        logCallback('info', `Produit simple détecté (Ref: ${reference}). Mise à jour du stock...`);
+        
+        try {
+          // Trouve le produit par sa référence
+          const productResp = await getXml(
+            `/products?filter[reference]=[${reference}]&display=full`
+          );
+          
+          if (!productResp?.prestashop?.products) {
+            logCallback('warn', `Produit ${reference} non trouvé pour la mise à jour de stock.`);
+            continue;
+          }
+          
+          let products = productResp.prestashop.products.product;
+          if (!Array.isArray(products)) {
+            products = products ? [products] : [];
+          }
+          
+          if (products.length === 0) {
+            logCallback('warn', `Produit ${reference} non trouvé pour la mise à jour de stock.`);
+            continue;
+          }
+          
+          const productId = products[0].id;
+          
+          // Récupère les stock_availables du produit
+          const stockResp = await getXml(
+            `/stock_availables?filter[id_product]=[${productId}]&display=full`
+          );
+          
+          if (!stockResp?.prestashop?.stock_availables) {
+            logCallback('warn', `Aucun stock trouvé pour le produit ${reference}.`);
+            continue;
+          }
+          
+          let stocks = stockResp.prestashop.stock_availables.stock_available;
+          if (!Array.isArray(stocks)) {
+            stocks = stocks ? [stocks] : [];
+          }
+          
+          // Trouve le stock parent (id_product_attribute = 0, id_shop_group = 0)
+          const parentStock = stocks.find(s => 
+            String(s.id_product_attribute || '0') === '0' && 
+            String(s.id_shop_group || '0') === '0'
+          );
+          
+          if (parentStock) {
+            // Mise à jour du stock existant
+            const stockPayload = {
+              prestashop: {
+                stock_available: {
+                  id: parentStock.id,
+                  id_product: parentStock.id_product,
+                  id_product_attribute: '0',
+                  id_shop: parentStock.id_shop || 1,
+                  id_shop_group: '0',
+                  quantity: stockInitial,
+                  depends_on_stock: parentStock.depends_on_stock || 0,
+                  out_of_stock: parentStock.out_of_stock || 2
+                }
+              }
+            };
+            
+            await putXml(`/stock_availables/${parentStock.id}`, stockPayload);
+            logCallback('success', `Stock produit simple ${reference} mis à jour : ${stockInitial} unités.`);
+          } else {
+            logCallback('warn', `Stock parent (id_shop_group=0) non trouvé pour ${reference}.`);
+          }
+        } catch (simpleError) {
+          logCallback('error', `Erreur mise à jour stock produit simple ${reference}: ${simpleError.message}`);
+        }
+        
         continue;
       }
 
@@ -92,6 +257,9 @@ export const processVariantImport = async (data, logCallback) => {
            continue;
         }
       }
+      
+      // Track parent product for stock sync at the end
+      parentProductsToSync.add(parentProductId);
 
       let taxRate = 0;
       if (parentTaxGroupId && taxRateCache[parentTaxGroupId]) {
@@ -204,45 +372,97 @@ export const processVariantImport = async (data, logCallback) => {
       };
       
       const createCombResp = await postXml('/combinations', combinationPayload);
-      // La ligne ci-dessous n'est plus nécessaire car la quantité est déjà définie
-      // const combinationId = createCombResp.prestashop.combination.id;
+      const combinationId = createCombResp?.prestashop?.combination?.id;
 
       // 5. Mettre à jour le stock (stock_availables)
-      // TOUT LE BLOC SUIVANT A ÉTÉ SUPPRIMÉ, CAR IL EST MAINTENANT INUTILE ET CAUSAIT L'ERREUR 500 ❌
-      /*
-      if (stockInitial > 0) {
-        logCallback('info', `Mise à jour du stock pour la déclinaison (${stockInitial})...`);
-        const stockResp = await getXml(`/stock_availables?filter[id_product]=[${parentProductId}]&filter[id_product_attribute]=[${combinationId}]&display=[id,id_product,id_product_attribute,id_shop,id_shop_group,depends_on_stock,out_of_stock]`);
-        
-        if (stockResp && stockResp.prestashop && stockResp.prestashop.stock_availables && stockResp.prestashop.stock_availables.stock_available) {
-           let stocks = stockResp.prestashop.stock_availables.stock_available;
-           if (!Array.isArray(stocks)) stocks = [stocks];
-           const stockAvailable = stocks[0];
-           
-           const stockPayload = {
-             prestashop: {
-               stock_available: {
-                 id: stockAvailable.id,
-                 id_product: stockAvailable.id_product,
-                 id_product_attribute: stockAvailable.id_product_attribute,
-                 id_shop: stockAvailable.id_shop,
-                 id_shop_group: stockAvailable.id_shop_group,
-                 quantity: stockInitial,
-                 depends_on_stock: stockAvailable.depends_on_stock || 0,
-                 out_of_stock: stockAvailable.out_of_stock || 2
-               }
-             }
-};
+      if (stockInitial >= 0 && combinationId) {
+        try {
+          logCallback('info', `Mise à jour du stock pour la déclinaison (${stockInitial})...`);
+          const stockResp = await getXml(`/stock_availables?filter[id_product]=[${parentProductId}]&filter[id_product_attribute]=[${combinationId}]&display=full`);
+          let stocks = stockResp?.prestashop?.stock_availables?.stock_available;
 
-           await putXml('/stock_availables', stockPayload);
+          if (stocks) {
+            if (!Array.isArray(stocks)) stocks = [stocks];
+            
+            // Chercher SPÉCIFIQUEMENT la ligne avec id_shop_group = 1
+            // (pas 0, qui est la ligne de configuration globale)
+            let stockAvailable = stocks.find(s => String(s.id_shop_group || '0') === '1');
+            
+            // Fallback : si pas de id_shop_group = 0, prendre la première
+            if (!stockAvailable) {
+              stockAvailable = stocks[0];
+            }
+
+            if (stockAvailable?.id) {
+              const stockPayload = {
+                prestashop: {
+                  stock_available: {
+                    id: stockAvailable.id,
+                    id_product: stockAvailable.id_product,
+                    id_product_attribute: stockAvailable.id_product_attribute || combinationId,
+                    id_shop: stockAvailable.id_shop || 1,
+                    id_shop_group: stockAvailable.id_shop_group || 0,
+                    quantity: stockInitial,
+                    depends_on_stock: stockAvailable.depends_on_stock || 0,
+                    out_of_stock: stockAvailable.out_of_stock || 2
+                  }
+                }
+              };
+
+              await putXml(`/stock_availables/${stockAvailable.id}`, stockPayload);
+            } else {
+              const stockPayload = {
+                prestashop: {
+                  stock_available: {
+                    id_product: parentProductId,
+                    id_product_attribute: combinationId,
+                    id_shop: 1,
+                    id_shop_group: 0,
+                    quantity: stockInitial,
+                    depends_on_stock: 0,
+                    out_of_stock: 2
+                  }
+                }
+              };
+
+              await postXml('/stock_availables', stockPayload);
+              logCallback('info', `Stock créé pour la déclinaison ${combinationId} avec quantité ${stockInitial}.`);
+            }
+          } else {
+            const stockPayload = {
+              prestashop: {
+                stock_available: {
+                  id_product: parentProductId,
+                  id_product_attribute: combinationId,
+                  id_shop: 1,
+                  id_shop_group: 0,
+                  quantity: stockInitial,
+                  depends_on_stock: 0,
+                  out_of_stock: 2
+                }
+              }
+            };
+
+            await postXml('/stock_availables', stockPayload);
+            logCallback('info', `Stock créé pour la déclinaison ${combinationId} avec quantité ${stockInitial}.`);
+          }
+        } catch (stockError) {
+          logCallback('warn', `Mise à jour du stock impossible pour ${reference}/${karazany}: ${stockError.message}`);
         }
       }
-      */
 
       logCallback('success', `Ligne ${index + 1} (${karazany}) importée avec succès.`);
     }
     
-    logCallback('success', 'Import des variations terminé avec succès !');
+    // ==========================================
+    // PHASE 2 : Synchroniser tous les stocks parents
+    // ==========================================
+    logCallback('info', `Synchronisation des stocks parents (${parentProductsToSync.size} produits)...`);
+    for (const parentProductId of parentProductsToSync) {
+      await syncParentStockQuantity(parentProductId, logCallback);
+    }
+    
+    logCallback('success', 'Import des variations et synchronisation des stocks terminés avec succès !');
   } catch (error) {
     const apiError = error.response?.data || error.message;
     logCallback('error', `Erreur lors de l'import des variations : ${error.message}`);
@@ -256,9 +476,31 @@ export const processImport = async (data, logCallback) => {
   const categoryCache = {};
   const taxCache = {};
 
+  const normalizeAvailabilityDate = (rawValue) => {
+    if (rawValue == null) return null;
+    const value = String(rawValue).trim();
+    if (!value) return null;
+
+    // DD/MM/YYYY or DD-MM-YYYY
+    let match = value.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
+    if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+
+    // YYYY-MM-DD or YYYY/MM/DD
+    match = value.match(/^(\d{4})[\/-](\d{2})[\/-](\d{2})$/);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+
+    return null;
+  };
+
   try {
     for (const [index, row] of data.entries()) {
       logCallback('info', `Importation de la ligne ${index + 1} (${row.nom || 'Sans nom'})...`);
+
+      const rawAvailabilityDate = row.date_availability_produit;
+      const availableDate = normalizeAvailabilityDate(rawAvailabilityDate);
+      if (rawAvailabilityDate != null && String(rawAvailabilityDate).trim() !== '' && !availableDate) {
+        logCallback('warn', `Ligne ${index + 1}: date_availability_produit invalide ("${rawAvailabilityDate}"). Formats acceptés: DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.`);
+      }
       
       // Calculate Price HT
       const priceRaw = row.prix_ttc ? row.prix_ttc.replace(',', '.') : '0';
@@ -378,6 +620,7 @@ export const processImport = async (data, logCallback) => {
             price: priceHT.toFixed(6),
             id_tax_rules_group: taxRulesGroupId,
             id_category_default: categoryId,
+            ...(availableDate ? { available_date: availableDate } : {}),
             name: {
               language: {
                 '@_id': '1',

@@ -1,5 +1,5 @@
 
-import { getXml, putXml, postXml } from '@/service/api';
+import { getXml, putXml, postXml } from './api';
 
 /**
  * Fetches all orders from the PrestaShop API.

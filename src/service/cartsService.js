@@ -6,7 +6,7 @@ import axios from 'axios';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
-const BASE_URL = 'http://localhost/prestashop_edition_classic_version_8.2.6/api';
+const BASE_URL = 'http://localhost/prestashop1/api';
 
 const extractVal = (node) => {
     if (!node) return '';
@@ -52,6 +52,7 @@ const transformerCart = (cart) => {
         id: extractVal(cart.id) || '',
         id_customer: extractVal(cart.id_customer) || '',
         id_lang: extractVal(cart.id_lang) || '',
+        date_add: extractVal(cart.date_add) || '',
         associations: {
             cart_rows: {
                 cart_row: normalized

@@ -55,9 +55,15 @@
 
       <div class="layout">
         <nav class="sidebar">
+          <RouterLink to="/backend/reset">🔄 Reset</RouterLink>
+          <RouterLink to="/backend/import">🔄 Import</RouterLink>
           <RouterLink to="/backend/dashboard">📊 Dashboard</RouterLink>
           <RouterLink to="/backend/liste-commandes">📦 Commandes</RouterLink>
           <RouterLink to="/backend/liste-paniers">� Paniers</RouterLink>
+          <RouterLink to="/backend/stocks">📦 Stocks</RouterLink>
+          <RouterLink to="/backend/synthese-stocks">📊 Synthèse stocks</RouterLink>
+          <RouterLink to="/backend/marges-produits">💰 Marges produits</RouterLink>
+          <RouterLink to="/backend/historique-mouvements">📜 Mouvements</RouterLink>
           <hr />
           <RouterLink to="/frontend/liste-produits">🌐 Voir le site</RouterLink>
         </nav>

@@ -1,13 +1,43 @@
 <script setup>
   import { ref, computed, onMounted } from 'vue';
   import ordersService from '@/service/ordersService';
+  import cartsService from '@/service/cartsService';
+  import { enrichCartSummary } from '@/utils/orderMetrics';
+
+  //id qu'on prends pour les payes
+  const PAID_STATE_IDS = new Set([2, 11, 5]);
 
   const orders = ref([]);
   const loading = ref(true);
 
+  // Récupération des commandes à l'initialisation du composant
   onMounted(async () => {
     try {
-      orders.value = await ordersService.getOrders();
+      const ordersData = await ordersService.getOrders();
+      const cartsData = await cartsService.getCarts();
+      
+      // Créer un mapping cart par ID pour recherche rapide
+      const cartsById = Object.fromEntries((cartsData || []).map((cart) => [String(cart.id), cart]));
+      
+      // Enrichir chaque commande avec les totaux TTC/HT calculés correctement
+      orders.value = await Promise.all(ordersData.map(async (order) => {
+        const cart = cartsById[String(order.id_cart)] || null;
+        let totalHT = Number(order.total_paid_tax_excl) || 0;
+        let totalTTC = Number(order.total_paid) || 0;
+        
+        // Si le panier existe, utiliser les calculs enrichis (plus fiables)
+        if (cart) {
+          const summary = await enrichCartSummary(cart);
+          totalHT = summary.totalHT || 0;
+          totalTTC = summary.totalTTC || 0;
+        }
+        
+        return {
+          ...order,
+          totalHT,
+          totalTTC
+        };
+      }));
     } catch (error) {
       console.error("Erreur dashboard:", error);
     } finally {
@@ -15,37 +45,89 @@
     }
   });
 
-  // CALCUL : Chiffre d'affaires total
-  //boucle qui additionne le total_paid de chaque commande, puis arrondi à 2 décimales
-  //depart sum=0, pour chaque order dans orders.value, sum = sum + total_paid de l'order
+  // CALCUL : Chiffre d'affaires total TTC
   const totalRevenue = computed(() => {
     return orders.value
-      .reduce((sum, order) => sum + parseFloat(order.total_paid), 0)
+      .reduce((sum, order) => sum + (Number(order.totalTTC) || 0), 0)
       .toFixed(2);
   });
 
-  // CALCUL : Groupement par jour
+  // CALCUL : Chiffre d'affaires total HT
+  const totalRevenueHT = computed(() => {
+    return orders.value
+      .reduce((sum, order) => sum + (Number(order.totalHT) || 0), 0)
+      .toFixed(2);
+  });
+
+  // Filtre les Commandes payées (les commandes dont le current_state est dans PAID_STATE_IDS)
+  const paidOrders = computed(() => {
+    return orders.value.filter((order) => PAID_STATE_IDS.has(Number(order.current_state)));
+  });
+
+  // CALCUL : Chiffre d'affaires payé TTC (additionne le total_paid des commandes payées)
+  const paidRevenue = computed(() => {
+    return paidOrders.value
+      .reduce((sum, order) => sum + (Number(order.totalTTC) || 0), 0)
+      .toFixed(2);
+  });
+
+  // CALCUL : Chiffre d'affaires payé HT (additionne le totalHT des commandes payées)
+  const paidRevenueHT = computed(() => {
+    return paidOrders.value
+      .reduce((sum, order) => sum + (Number(order.totalHT) || 0), 0)
+      .toFixed(2);
+  });
+
+  // CALCUL : Nombre de Commandes payées
+  const paidOrdersCount = computed(() => paidOrders.value.length);
+
+  // CALCUL : Totaux payés par jour, calculés uniquement à partir des commandes payées
+  const paidDailyStats = computed(() => {
+    const groups = {};
+
+    paidOrders.value.forEach((order) => {
+      const date = order.date_add.split(' ')[0];
+
+      if (!groups[date]) {
+        groups[date] = { paidTTC: 0, paidHT: 0 };
+      }
+
+      groups[date].paidTTC += Number(order.totalTTC) || 0;
+      groups[date].paidHT += Number(order.totalHT) || 0;
+    });
+
+    return groups;
+  });
+
+  // CALCUL : Groupement par jour des commandes (compte et total par jour, TTC et HT)
   const dailyStats = computed(() => {
     const groups = {};
 
     orders.value.forEach(order => {
       // On extrait juste la date (YYYY-MM-DD) de date_add
       const date = order.date_add.split(' ')[0];
-      //recherche dans groups si la date existe déjà, sinon on crée une nouvelle entrée avec count=0 et total=0
+      //recherche dans groups si la date existe déjà, sinon on crée une nouvelle entrée avec count=0 et totaux=0
       if (!groups[date]) {
-        groups[date] = { date: date, count: 0, total: 0 };
+        groups[date] = { date, count: 0, totalTTC: 0, totalHT: 0, paidTTC: 0, paidHT: 0 };
       }
-      // On ajoute +1 au compteur et le montant au total du jour
+      // On ajoute +1 au compteur et les montants TTC et HT au total du jour
       groups[date].count += 1;
-      groups[date].total += parseFloat(order.total_paid);
+      groups[date].totalTTC += Number(order.totalTTC) || 0;
+      groups[date].totalHT += Number(order.totalHT) || 0;
     });
 
     // Convertir l'objet en tableau et trier par date décroissante
-    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+    return Object.values(groups)
+      .map((day) => ({
+        ...day,
+        paidTTC: paidDailyStats.value[day.date]?.paidTTC || 0,
+        paidHT: paidDailyStats.value[day.date]?.paidHT || 0
+      }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
   });
 
 
-  // Formatage de la date d'ajout "2026-05-14 22:15:03" en "jeu. 14 mai"
+  // Formatage de la date d'ajout pour affichage "2026-05-14 22:15:03" en "jeu. 14 mai"
   const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('fr-FR', { 
       weekday: 'short', day: 'numeric', month: 'long' 
@@ -61,7 +143,16 @@
       <div class="card total-sales">
         <div class="card-info">
           <span class="label">Chiffre d'Affaires Total</span>
-          <span class="value">{{ totalRevenue }} €</span>
+          <div class="price-row">
+            <div class="price-item">
+              <span class="price-value">{{ totalRevenue }} €</span>
+              <span class="price-type">TTC</span>
+            </div>
+            <div class="price-item">
+              <span class="price-value">{{ totalRevenueHT }} €</span>
+              <span class="price-type">HT</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -69,6 +160,29 @@
         <div class="card-info">
           <span class="label">Commandes Totales</span>
           <span class="value">{{ orders.length }}</span>
+        </div>
+      </div>
+
+      <div class="card paid-sales">
+        <div class="card-info">
+          <span class="label">Chiffre d'Affaires Payé</span>
+          <div class="price-row">
+            <div class="price-item">
+              <span class="price-value">{{ paidRevenue }} €</span>
+              <span class="price-type">TTC</span>
+            </div>
+            <div class="price-item">
+              <span class="price-value">{{ paidRevenueHT }} €</span>
+              <span class="price-type">HT</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card paid-orders">
+        <div class="card-info">
+          <span class="label">Commandes Payées</span>
+          <span class="value">{{ paidOrdersCount }}</span>
         </div>
       </div>
     </div>
@@ -81,7 +195,10 @@
         <div class="stats-header">
           <span class="col-date">Date</span>
           <span class="col-count">Commandes</span>
-          <span>Montant</span>
+          <span class="col-amount">Total TTC</span>
+          <span class="col-amount">Payé TTC</span>
+          <span class="col-amount">Total HT</span>
+          <span class="col-amount">Payé HT</span>
         </div>
         
         <div v-for="day in dailyStats" :key="day.date" class="stats-row">
@@ -89,7 +206,10 @@
           <div class="col-count">
             <span class="count-badge">{{ day.count }}</span>
           </div>
-          <div class="col-amount">{{ day.total.toFixed(2) }} €</div>
+          <div class="col-amount">{{ day.totalTTC.toFixed(2) }} €</div>
+          <div class="col-amount paid">{{ day.paidTTC.toFixed(2) }} €</div>
+          <div class="col-amount">{{ day.totalHT.toFixed(2) }} €</div>
+          <div class="col-amount paid">{{ day.paidHT.toFixed(2) }} €</div>
         </div>
       </div>
     </div>
@@ -118,11 +238,38 @@
 }
 
 .card-icon { font-size: 2.5rem; }
-.label { display: block; color: #7f8c8d; font-size: 0.9rem; }
+.label { display: block; color: #7f8c8d; font-size: 0.9rem; margin-bottom: 8px; }
 .value { font-size: 1.5rem; font-weight: bold; color: #2c3e50; }
+
+/* Affichage des prix TTC et HT côte à côte */
+.price-row {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.price-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.price-value {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.price-type {
+  font-size: 0.7rem;
+  color: #95a5a6;
+  text-transform: uppercase;
+}
 
 .total-sales { border-left: 5px solid #2ecc71; }
 .total-orders { border-left: 5px solid #3498db; }
+.paid-sales { border-left: 5px solid #f39c12; }
+.paid-orders { border-left: 5px solid #9b59b6; }
 
 /* Styles du tableau journalier */
 .stats-section {
@@ -149,7 +296,18 @@
 
 .col-date { flex: 2; font-weight: 500; }
 .col-count { flex: 1; text-align: center; }
-.col-amount { flex: 1; text-align: right; font-weight: bold; color: #2ecc71; }
+.col-amount { flex: 1.2; text-align: right; font-weight: bold; color: #2ecc71; }
+
+.col-amount.paid {
+  color: #3498db;
+}
+
+.ttc-label { 
+  font-size: 0.7rem; 
+  color: #95a5a6; 
+  font-weight: normal; 
+  margin-left: 4px; 
+}
 
 .count-badge {
   background: #ebf5fb;

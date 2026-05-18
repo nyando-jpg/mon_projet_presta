@@ -64,6 +64,7 @@ const migrateGuestCartToCustomer = (customerId) => {
   if (!guestCartId) return null;
 
   localStorage.setItem(getCustomerCartStorageKey(customerId), String(guestCartId));
+  localStorage.removeItem(GUEST_CART_STORAGE_KEY);
   return guestCartId;
 };
 export {

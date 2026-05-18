@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 
-const BASE_URL = 'http://localhost/prestashop_edition_classic_version_8.2.6/api';
+const BASE_URL = 'http://localhost/prestashop1/api';
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
 
 // Utilitaire pour forcer un tableau (PrestaShop XML quirk)
@@ -86,6 +86,27 @@ export async function getProductTaxRate(productId) {
     }
 }
 
+// Retourne un taux de taxe par défaut (ex: France ou première taxe trouvée)
+export async function getDefaultTaxRate() {
+    try {
+        const taxes = await module.exports.getTaxes();
+        if (!taxes || taxes.length === 0) return null;
+
+        // Cherche une taxe pour la France (id_country n'est pas présent directement sur taxe,
+        // mais on récupère la première taxe utile > 0 comme fallback)
+        const firstValid = taxes.find(t => {
+            const r = parseFloat(extractVal(t?.rate));
+            return Number.isFinite(r) && r > 0;
+        }) || taxes[0];
+
+        const rate = parseFloat(extractVal(firstValid?.rate));
+        return Number.isFinite(rate) ? rate : null;
+    } catch (error) {
+        console.error('Erreur getDefaultTaxRate:', error);
+        return null;
+    }
+}
+
 export function calculatePriceTTC(priceHT, taxRate) {
     const ht = parseFloat(priceHT);
     const rate = parseFloat(taxRate);
@@ -134,6 +155,8 @@ export default {
     },
 
     getProductTaxRate,
+
+    getDefaultTaxRate,
 
     calculatePriceTTC(priceHT, taxRate) {
         return calculatePriceTTC(priceHT, taxRate);

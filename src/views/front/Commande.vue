@@ -15,6 +15,8 @@ const router = useRouter();
 const currentStep = ref(1);
 const panier = ref([]);
 const createdAddressId = ref(null);
+const addressesList = ref([]);
+const customersList = ref([]);
 
 const xmlParser = new XMLParser({
     ignoreAttributes: false,
@@ -66,6 +68,96 @@ const parseStoredCustomer = () => {
         console.error('Erreur lecture customer localStorage :', error);
         return null;
     }
+};
+
+const loadCustomersList = async () => {
+    try {
+        customersList.value = await customersService.getTrueCustomers();
+    } catch (error) {
+        console.error('Erreur chargement clients existants :', error);
+        customersList.value = [];
+    }
+};
+
+const saveSelectedCustomer = async (customer) => {
+    if (!customer?.id) return;
+
+    const normalizedCustomer = {
+        id: String(customer.id || ''),
+        id_gender: String(customer.id_gender || ''),
+        firstname: String(customer.firstname || ''),
+        lastname: String(customer.lastname || ''),
+        email: String(customer.email || ''),
+        is_guest: String(customer.is_guest || '0')
+    };
+
+    localStorage.setItem('customer', JSON.stringify(normalizedCustomer));
+    migrateGuestCartToCustomer(normalizedCustomer.id);
+
+    if (normalizedCustomer.id_gender === '2') form.value.titre = 'Mme';
+    if (normalizedCustomer.id_gender === '1') form.value.titre = 'M.';
+    form.value.prenom = normalizedCustomer.firstname;
+    form.value.nom = normalizedCustomer.lastname;
+    form.value.email = normalizedCustomer.email;
+
+    await loadCustomerAddresses();
+    currentStep.value = 2;
+};
+
+const ensureCustomerForCheckout = async () => {
+    const storedCustomer = parseStoredCustomer();
+    if (storedCustomer?.id) {
+        return storedCustomer;
+    }
+
+    const newCustomer = await customersService.createCustomer({
+        firstname: form.value.prenom,
+        lastname: form.value.nom,
+        email: form.value.email,
+        password: form.value.password || 'password123',
+        newsletter: form.value.newsletter,
+        is_guest: true
+    });
+
+    localStorage.setItem('customer', JSON.stringify(newCustomer));
+    migrateGuestCartToCustomer(newCustomer.id);
+    return newCustomer;
+};
+
+const loadCustomerAddresses = async () => {
+    const customer = parseStoredCustomer();
+    if (!customer || !customer.id) {
+        addressesList.value = [];
+        // Valeurs fixes
+        form.value.codePostal = '13000';
+        form.value.ville = 'Marseille';
+        return;
+    }
+
+    const addr = await addressesService.getAddressesByCustomer(customer.id);
+    addressesList.value = addr;
+
+    if (addr.length > 0) {
+        const a = addr[0];
+        // Prefill form fields mapping adresse1 -> adresse (conversion string sécurisée)
+        form.value.adresse = String(a.address1 || form.value.adresse || '');
+        // Valeurs fixes pour ville et codePostal
+        form.value.codePostal = '13000';
+        form.value.ville = 'Marseille';
+        // set createdAddressId so updateCartAddresses can use existing address
+        createdAddressId.value = a.id;
+    } else {
+        if (!form.value.adresse) form.value.adresse = 'adresse';
+        form.value.codePostal = '13000';
+        form.value.ville = 'Marseille';
+    }
+};
+
+const selectAddress = (a) => {
+    form.value.adresse = String(a.address1 || form.value.adresse || '');
+    form.value.codePostal = '13000';
+    form.value.ville = 'Marseille';
+    createdAddressId.value = a.id;
 };
 
 const form = ref({
@@ -271,10 +363,7 @@ const finaliserCommande = async () => {
         return; // Affiche une alerte et se repositionne à l'étape fautive
     }
     try {
-        const rawCustomer = parseStoredCustomer();
-        if (!rawCustomer) throw new Error("Client non trouvé");
-
-        const customer = rawCustomer;
+        const customer = await ensureCustomerForCheckout();
         const customerId = customer.id; // ID client utilisé pour la commande
 
         // On va chercher la clé dynamique dans le localStorage
@@ -368,20 +457,15 @@ const nextStep = async () => {
 
         try {
             const storedCustomer = parseStoredCustomer();
-            if (!storedCustomer) {
-                const newCustomer = await customersService.createCustomer({
-                    firstname: form.value.prenom,
-                    lastname: form.value.nom,
-                    email: form.value.email,
-                    password: form.value.password || 'password123',
-                    newsletter: form.value.newsletter,
-                    is_guest: true
-                });
-                localStorage.setItem('customer', JSON.stringify(newCustomer));
-                migrateGuestCartToCustomer(newCustomer.id);
-            } else {
+            if (storedCustomer) {
                 localStorage.setItem('customer', JSON.stringify(storedCustomer));
                 migrateGuestCartToCustomer(storedCustomer.id);
+                await loadCustomerAddresses();
+            } else {
+                addressesList.value = [];
+                if (!form.value.adresse) form.value.adresse = 'adresse';
+                if (!form.value.codePostal) form.value.codePostal = '13000';
+                if (!form.value.ville) form.value.ville = 'Marseille';
             }
             
             currentStep.value = 2; // On change la valeur et ON S'ARRÊTE LÀ
@@ -398,7 +482,7 @@ const nextStep = async () => {
         }
 
         try {
-            const customer = parseStoredCustomer();
+            const customer = await ensureCustomerForCheckout();
             migrateGuestCartToCustomer(customer?.id);
             const newAddr = await addressesService.createAddress({
                 id_customer: customer.id,
@@ -449,6 +533,7 @@ const nextStep = async () => {
 
 onMounted(() => {
     loadPanier();
+    loadCustomersList();
     window.addEventListener('customer-update', loadPanier);
 
     // Récupération du client connecté
@@ -465,6 +550,7 @@ onMounted(() => {
             // Optionnel : Si l'utilisateur est déjà connecté, 
             // on peut passer directement à l'étape 2 (Adresses)
             // currentStep.value = 2; 
+            loadCustomerAddresses();
             
         } catch (e) {
             console.error("Erreur lors de la lecture du client :", e);
@@ -496,6 +582,23 @@ onUnmounted(() => {
                 <!-- Étape 1: Informations personnelles -->
                 <div v-if="currentStep === 1" class="form-step">
                     <h2>1. Informations personnelles</h2>
+
+                        <div v-if="customersList.length" class="saved-customers">
+                            <h3>Clients existants</h3>
+                            <table class="customers-table">
+                                <thead>
+                                    <tr><th>Client</th><th>E-mail</th><th></th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="customer in customersList" :key="customer.id">
+                                        <td>{{ customer.firstname }} {{ customer.lastname }}</td>
+                                        <td>{{ customer.email }}</td>
+                                        <td><button @click.prevent="saveSelectedCustomer(customer)">Choisir ce client</button></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p v-else class="saved-customers-empty">Aucun client existant trouvé.</p>
                     
                     <div class="form-group">
                         <label>Titre</label>
@@ -535,6 +638,25 @@ onUnmounted(() => {
                 <!-- Étape 2: Adresses -->
                 <div v-if="currentStep === 2" class="form-step">
                     <h2>2. Adresses</h2>
+
+                    <div v-if="addressesList.length" class="saved-addresses">
+                        <h3>Adresses enregistrées</h3>
+                        <table class="addresses-table">
+                            <thead>
+                                <tr><th>Alias</th><th>Adresse</th><th>CP</th><th>Ville</th><th>Téléphone</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(a, idx) in addressesList" :key="a.id">
+                                    <td>{{ a.alias || (a.firstname + ' ' + a.lastname) }}</td>
+                                    <td>{{ a.address1 }}</td>
+                                    <td>{{ a.postcode }}</td>
+                                    <td>{{ a.city }}</td>
+                                    <td>{{ a.phone }}</td>
+                                    <td><button @click.prevent="selectAddress(a)">Utiliser</button></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
 
                     <div class="form-group">
                         <label>Adresse *</label>
@@ -705,6 +827,36 @@ h1 {
 .form-step h2 {
     margin-bottom: 20px;
     font-size: 1.3em;
+}
+
+.saved-customers {
+    margin-bottom: 20px;
+    padding: 12px;
+    border: 1px solid #ddd;
+    background: #fbfbfb;
+}
+
+.saved-customers h3 {
+    margin: 0 0 10px;
+}
+
+.customers-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92em;
+}
+
+.customers-table th,
+.customers-table td {
+    border-bottom: 1px solid #e5e5e5;
+    padding: 8px;
+    text-align: left;
+}
+
+.saved-customers-empty {
+    margin-bottom: 20px;
+    color: #666;
+    font-size: 0.95em;
 }
 
 .form-group {

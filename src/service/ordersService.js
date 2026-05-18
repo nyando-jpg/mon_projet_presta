@@ -3,7 +3,7 @@ import axios from 'axios';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
-const BASE_URL = 'http://localhost/prestashop_edition_classic_version_8.2.6/api';
+const BASE_URL = 'http://localhost/prestashop1/api';
 
 // Utilitaires
 const extractVal = (node) => {
@@ -19,9 +19,202 @@ const extractVal = (node) => {
     return '';
 };
 
+// Permet de s'assurer que les données sont toujours traitées comme des tableaux, même s'il n'y en a qu'un seul
 const asArray = (value) => {
     if (!value) return [];
     return Array.isArray(value) ? value : [value];
+};
+
+const extractStockRowsFromOrder = (order) => {
+    const rows = asArray(order?.products || order?.associations?.order_rows?.order_row || []);
+
+    return rows
+        .map((row) => ({
+            id_product: extractVal(row?.product_id || row?.id_product),
+            id_product_attribute: extractVal(row?.product_attribute_id || row?.id_product_attribute || '0') || '0',
+            quantity: Number(extractVal(row?.product_quantity || row?.quantity || row?.product_quantity_refunded || 0)) || 0
+        }))
+        .filter((row) => row.id_product && row.quantity > 0);
+};
+
+const getStockAvailableNode = async (productId, productAttributeId) => {
+    const response = await axios.get(
+        `${BASE_URL}/stock_availables?display=full&filter[id_product]=[${productId}]&filter[id_product_attribute]=[${productAttributeId}]`,
+        {
+            auth: { username: WS_KEY, password: '' },
+            responseType: 'text'
+        }
+    );
+
+    const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+    const result = parser.parse(response.data);
+    const stockNodes = result?.prestashop?.stock_availables?.stock_available || [];
+    const stocks = Array.isArray(stockNodes) ? stockNodes : [stockNodes];
+
+    const preferredStock = stocks.find((stock) => String(stock?.id_shop_group || '0') === '1')
+        || stocks.find((stock) => String(stock?.id_shop || '0') === '1')
+        || stocks[0];
+
+    return preferredStock || null;
+};
+
+const updateStockAvailableQuantity = async (stockNode, quantity) => {
+    if (!stockNode?.id) {
+        throw new Error('Stock disponible introuvable.');
+    }
+
+    const xmlBuilder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '', format: false });
+    const stockPayload = {
+        prestashop: {
+            stock_available: {
+                id: extractVal(stockNode.id),
+                id_product: extractVal(stockNode.id_product),
+                id_product_attribute: extractVal(stockNode.id_product_attribute || '0') || '0',
+                id_shop: extractVal(stockNode.id_shop || '1') || '1',
+                id_shop_group: extractVal(stockNode.id_shop_group || '0') || '0',
+                quantity: String(Math.max(0, quantity)),
+                depends_on_stock: extractVal(stockNode.depends_on_stock || '0') || '0',
+                out_of_stock: extractVal(stockNode.out_of_stock || '2') || '2'
+            }
+        }
+    };
+
+    const xml = xmlBuilder.build(stockPayload);
+
+    try {
+        await axios.put(`${BASE_URL}/stock_availables/${extractVal(stockNode.id)}`, xml, {
+            auth: { username: WS_KEY, password: '' },
+            headers: { 'Content-Type': 'application/xml' }
+        });
+    } catch (error) {
+        if (error?.response?.status === 400) {
+            console.warn(`Mise à jour stock ${extractVal(stockNode.id)} appliquée malgré un 400 retourné par PrestaShop.`);
+            return;
+        }
+
+        throw error;
+    }
+};
+
+let cachedStockMovementEmployeeId = null;
+let cachedStockMovementReasonIds = {
+    1: null,
+    '-1': null
+};
+
+const normalizeStockMovementList = (node) => {
+    const raw = node?.stock_movement || node?.stock_movements || node || [];
+    return Array.isArray(raw) ? raw : (raw ? [raw] : []);
+};
+
+const resolveStockMovementEmployeeId = async () => {
+    if (cachedStockMovementEmployeeId) return cachedStockMovementEmployeeId;
+
+    try {
+        const response = await axios.get(`${BASE_URL}/employees?display=full&limit=1`, {
+            auth: { username: WS_KEY, password: '' },
+            responseType: 'text'
+        });
+
+        const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+        const result = parser.parse(response.data);
+        const employees = result?.prestashop?.employees;
+        const employeeList = employees?.employee || employees || [];
+        const firstEmployee = Array.isArray(employeeList) ? employeeList[0] : employeeList;
+        const employeeId = Number.parseInt(extractVal(firstEmployee?.id), 10);
+
+        cachedStockMovementEmployeeId = Number.isFinite(employeeId) && employeeId > 0 ? employeeId : 1;
+    } catch (error) {
+        cachedStockMovementEmployeeId = 1;
+    }
+
+    return cachedStockMovementEmployeeId;
+};
+
+const resolveStockMovementReasonId = async (sign) => {
+    const normalizedSign = Number(sign) >= 0 ? 1 : -1;
+    if (cachedStockMovementReasonIds[normalizedSign]) return cachedStockMovementReasonIds[normalizedSign];
+
+    const defaultConfigKey = normalizedSign > 0
+        ? 'PS_STOCK_MVT_INC_REASON_DEFAULT'
+        : 'PS_STOCK_MVT_DEC_REASON_DEFAULT';
+
+    try {
+        const configResponse = await axios.get(`${BASE_URL}/configurations?display=full&filter[name]=[${defaultConfigKey}]`, {
+            auth: { username: WS_KEY, password: '' },
+            responseType: 'text'
+        });
+
+        const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+        const configResult = parser.parse(configResponse.data);
+        const configNode = configResult?.prestashop?.configurations?.configuration;
+        const configItem = Array.isArray(configNode) ? configNode[0] : configNode;
+        const configValue = Number.parseInt(extractVal(configItem?.value), 10);
+
+        if (Number.isFinite(configValue) && configValue > 0) {
+            cachedStockMovementReasonIds[normalizedSign] = configValue;
+            return configValue;
+        }
+    } catch (error) {
+        // fallback below
+    }
+
+    try {
+        const response = await axios.get(`${BASE_URL}/stock_movement_reasons?display=full`, {
+            auth: { username: WS_KEY, password: '' },
+            responseType: 'text'
+        });
+
+        const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+        const result = parser.parse(response.data);
+        const reasons = normalizeStockMovementList(result?.prestashop?.stock_movement_reasons);
+        const reason = reasons.find((item) => Number.parseInt(extractVal(item?.sign), 10) === normalizedSign) || reasons[0];
+        const reasonId = Number.parseInt(extractVal(reason?.id_stock_mvt_reason || reason?.id), 10);
+
+        if (Number.isFinite(reasonId) && reasonId > 0) {
+            cachedStockMovementReasonIds[normalizedSign] = reasonId;
+            return reasonId;
+        }
+    } catch (error) {
+        // fallback below
+    }
+
+    throw new Error(`Impossible de résoudre la raison de mouvement pour le signe ${normalizedSign}`);
+};
+
+const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderId = null }) => {
+    const delta = newQuantity - oldQuantity;
+    if (delta === 0) return null;
+
+    const sign = delta > 0 ? 1 : -1;
+    const physicalQuantity = Math.abs(delta);
+    const idEmployee = await resolveStockMovementEmployeeId();
+    const idStockMovementReason = await resolveStockMovementReasonId(sign);
+    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '', format: false });
+
+    const movementPayload = {
+        prestashop: {
+            stock_movement: {
+                id_stock: Number(extractVal(stockNode?.id)) || 0,
+                id_order: orderId ? Number(orderId) : 0,
+                id_product: Number(extractVal(stockNode?.id_product)) || 0,
+                id_product_attribute: Number(extractVal(stockNode?.id_product_attribute || '0')) || 0,
+                id_stock_mvt_reason: Number(idStockMovementReason) || 0,
+                id_employee: Number(idEmployee) || 1,
+                physical_quantity: physicalQuantity,
+                sign,
+                price_te: '0.000000',
+                date_add: new Date().toISOString().slice(0, 19).replace('T', ' ')
+            }
+        }
+    };
+
+    const xml = builder.build(movementPayload);
+
+    await axios.post(`${BASE_URL}/stock_movements`, xml, {
+        auth: { username: WS_KEY, password: '' },
+        headers: { 'Content-Type': 'application/xml' }
+    });
 };
 
 /**
@@ -29,12 +222,19 @@ const asArray = (value) => {
  * Transforme une commande XML brute en objet JS propre et utilisable.
  */
 const transformerOrder = (o) => {
+    // Extraire les totaux TTC et HT si disponibles
+    const totalTTC = parseFloat(extractVal(o.total_paid_tax_incl || o.total_paid)) || 0;
+    const totalHT = parseFloat(extractVal(o.total_paid_tax_excl || o.total_products)) || 0;
+    
     return {
         id: extractVal(o.id),
         reference: extractVal(o.reference),
         id_customer: extractVal(o.id_customer),
         id_cart: extractVal(o.id_cart),
-        total_paid: parseFloat(extractVal(o.total_paid)).toFixed(2), // Force 2 décimales
+        // Montants TTC (Toutes Taxes Comprises) et HT (Hors Taxes)
+        total_paid: totalTTC.toFixed(2), // TTC par défaut (montant réel payé)
+        total_paid_tax_incl: totalTTC.toFixed(2), // TTC explicite
+        total_paid_tax_excl: totalHT.toFixed(2), // HT explicite
         payment: extractVal(o.payment),
         date_add: extractVal(o.date_add),
         current_state: extractVal(o.current_state),
@@ -45,6 +245,47 @@ const transformerOrder = (o) => {
 };
 
 export default {
+    async getStockMovementsHistory() {
+        try {
+            const response = await axios.get(`${BASE_URL}/stock_movements`, {
+                auth: { username: WS_KEY, password: '' },
+                params: {
+                    output_format: 'JSON',
+                    display: 'full'
+                }
+            });
+
+            const payload = response.data;
+            const movementsNode = payload?.stock_mvts
+                || payload?.stock_movements?.stock_movement
+                || payload?.stock_movements
+                || payload?.prestashop?.stock_movements?.stock_movement
+                || [];
+
+            const movements = Array.isArray(movementsNode) ? movementsNode : (movementsNode ? [movementsNode] : []);
+
+            return movements.map((movement) => ({
+                id: movement.id_stock_mvt ?? movement.id ?? '',
+                id_stock: movement.id_stock ?? '',
+                id_order: movement.id_order ?? '',
+                id_stock_mvt_reason: movement.id_stock_mvt_reason ?? '',
+                id_employee: movement.id_employee ?? '',
+                employee_firstname: movement.employee_firstname ?? '',
+                employee_lastname: movement.employee_lastname ?? '',
+                physical_quantity: Number(movement.physical_quantity ?? 0),
+                date_add: movement.date_add ?? '',
+                sign: Number(movement.sign ?? 0),
+                price_te: Number(movement.price_te ?? 0),
+                last_wa: Number(movement.last_wa ?? 0),
+                current_wa: Number(movement.current_wa ?? 0),
+                referer: movement.referer ?? ''
+            }));
+        } catch (error) {
+            console.error('Erreur récupération historique mouvements:', error);
+            throw error;
+        }
+    },
+
     /**
      * Récupère les infos complètes du panier
      */
@@ -318,6 +559,7 @@ export default {
         }
     },
 
+    // Récupère la liste des états de commande
     async getOrderStates() {
         try {
             const response = await axios.get(`${BASE_URL}/order_states?display=full`, {
@@ -343,6 +585,40 @@ export default {
         }
     },
 
+    async getOrderHistory(orderId) {
+        try {
+            const response = await axios.get(`${BASE_URL}/order_histories`, {
+                auth: { username: WS_KEY, password: '' },
+                params: {
+                    output_format: 'JSON',
+                    display: 'full'
+                },
+                responseType: 'json'
+            });
+
+            const payload = response.data;
+            const historiesNode = payload?.order_histories?.order_history
+                || payload?.order_histories
+                || payload?.prestashop?.order_histories?.order_history
+                || [];
+
+            const histories = asArray(historiesNode).filter((history) => String(history?.id_order ?? '') === String(orderId));
+
+            return asArray(histories).map((history) => ({
+                id: String(history.id ?? history.id_order_history ?? ''),
+                id_order: String(history.id_order ?? ''),
+                id_order_state: String(history.id_order_state ?? ''),
+                date_add: String(history.date_add ?? ''),
+                employee_firstname: String(history.employee_firstname ?? ''),
+                employee_lastname: String(history.employee_lastname ?? '')
+            }));
+        } catch (error) {
+            console.error('Erreur récupération historique commande:', error);
+            throw error;
+        }
+    },
+
+    // Met à jour l'état d'une commande en créant une nouvelle entrée dans l'historique
     async updateOrderState(orderId, newStateId) {
         try {
             // On crée une entrée dans l'historique (order_histories)
@@ -366,5 +642,62 @@ export default {
             // Si le POST échoue, vérifie que les permissions pour 'order_histories' sont activées dans PrestaShop
             throw error;
         }
+    },
+
+    async restoreOrderReservedStock(order) {
+        const stockRows = extractStockRowsFromOrder(order);
+
+        if (!stockRows.length) {
+            return { updated: 0 };
+        }
+
+        let updated = 0;
+
+        for (const row of stockRows) {
+            const stockNode = await getStockAvailableNode(row.id_product, row.id_product_attribute);
+            if (!stockNode?.id) {
+                continue;
+            }
+
+            const currentQuantity = Number(extractVal(stockNode.quantity)) || 0;
+            await updateStockAvailableQuantity(stockNode, currentQuantity + row.quantity);
+            updated += 1;
+        }
+
+        return { updated };
+    },
+
+    async consumeOrderReservedStock(order) {
+        const stockRows = extractStockRowsFromOrder(order);
+
+        if (!stockRows.length) {
+            return { updated: 0, movements: 0 };
+        }
+
+        let updated = 0;
+        let movements = 0;
+
+        for (const row of stockRows) {
+            const stockNode = await getStockAvailableNode(row.id_product, row.id_product_attribute);
+            if (!stockNode?.id) {
+                continue;
+            }
+
+            const currentQuantity = Number(extractVal(stockNode.quantity)) || 0;
+            const nextQuantity = Math.max(0, currentQuantity - row.quantity);
+
+            await updateStockAvailableQuantity(stockNode, nextQuantity);
+            updated += 1;
+
+            await createStockMovement({
+                stockNode,
+                oldQuantity: currentQuantity,
+                newQuantity: nextQuantity,
+                orderId: extractVal(order?.id)
+            });
+            movements += 1;
+        }
+
+        return { updated, movements };
     }
 };

@@ -2,7 +2,7 @@ import axios from 'axios';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser'; 
 
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W'; 
-const BASE_URL = 'http://localhost/prestashop_edition_classic_version_8.2.6/api'; 
+const BASE_URL = 'http://localhost/prestashop1/api'; 
 
 // Ta fonction utilitaire "Anti-Crash"
 const extractVal = (node) => {

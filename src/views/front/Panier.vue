@@ -9,6 +9,56 @@ import { getActiveCartId, getCurrentCustomerId } from '@/utils/cartStorage';
 const router = useRouter();
 const panier = ref([]);
 const loading = ref(true);
+const showStockWarningModal = ref(false);
+const pendingCheckout = ref(false);
+const stockWarnings = ref([]);
+
+const resolveAvailableStockForItem = async (item) => {
+    const productId = String(item?.id_product || '').trim();
+    const productAttributeId = String(item?.id_product_attribute || '0').trim() || '0';
+
+    if (!productId || productId === '0') {
+        return 0;
+    }
+
+    try {
+        const product = await produitsService.getProduitById(productId);
+        const stockRows = Array.isArray(product?.stockAvailables) ? product.stockAvailables : [];
+        const matchingRow = stockRows.find((row) => String(row.id_product_attribute || '0').trim() === productAttributeId)
+            || stockRows.find((row) => String(row.id_product_attribute || '0').trim() === '0')
+            || null;
+
+        if (matchingRow?.id) {
+            const stock = await produitsService.getStockQuantity(matchingRow.id);
+            return Number(stock?.quantity ?? 0);
+        }
+
+        return Number(product?.stockQuantity ?? product?.quantity ?? 0);
+    } catch (error) {
+        return Number(item?.quantity ?? 0);
+    }
+};
+
+const checkStockBeforeCheckout = async () => {
+    const warnings = [];
+
+    for (const item of panier.value) {
+        const availableStock = await resolveAvailableStockForItem(item);
+        const wantedQuantity = Number(item.quantity || 0);
+
+        if (wantedQuantity > availableStock) {
+            warnings.push({
+                name: item.name,
+                wantedQuantity,
+                availableStock,
+                id_product: item.id_product,
+                id_product_attribute: item.id_product_attribute
+            });
+        }
+    }
+
+    return warnings;
+};
 
 const enrichCartRows = async (rows) => {
     return Promise.all(rows.map(async (row) => {
@@ -157,12 +207,38 @@ const getTotalItems = () => {
 };
 
 // Commander
-const commander = () => {
+const commander = async () => {
     if (panier.value.length === 0) {
         alert("Votre panier est vide !");
         return;
     }
+
+    const warnings = await checkStockBeforeCheckout();
+
+    if (warnings.length > 0) {
+        stockWarnings.value = warnings;
+        pendingCheckout.value = true;
+        showStockWarningModal.value = true;
+        return;
+    }
+
     router.push('/frontend/commande');
+};
+
+const cancelStockWarning = () => {
+    showStockWarningModal.value = false;
+    pendingCheckout.value = false;
+    stockWarnings.value = [];
+};
+
+const continueCheckout = () => {
+    showStockWarningModal.value = false;
+
+    if (pendingCheckout.value) {
+        pendingCheckout.value = false;
+        stockWarnings.value = [];
+        router.push('/frontend/commande');
+    }
 };
 
 onMounted(() => {
@@ -250,6 +326,28 @@ onUnmounted(() => {
             <div class="buttons">
                 <button class="btn-continue" @click="router.push('/frontend/liste-produits')">Continuer les achats</button>
                 <button class="btn-order" @click="commander">Commander</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showStockWarningModal" class="modal-overlay" @click="cancelStockWarning">
+        <div class="modal-content stock-warning-modal" @click.stop>
+            <button class="modal-close" @click="cancelStockWarning">✕</button>
+            <h2 class="warning-title">Stock insuffisant</h2>
+
+            <p>Certains articles ne sont plus disponibles en quantité suffisante :</p>
+
+            <ul class="warning-list">
+                <li v-for="item in stockWarnings" :key="`${item.id_product}-${item.id_product_attribute}`">
+                    <strong>{{ item.name }}</strong> : il n’y a plus que {{ item.availableStock }} au lieu de {{ item.wantedQuantity }} demandé(s).
+                </li>
+            </ul>
+
+            <p>Voulez-vous annuler ou poursuivre quand même ?</p>
+
+            <div class="modal-buttons">
+                <button class="btn-continue" @click="cancelStockWarning">Annuler</button>
+                <button class="btn-order" @click="continueCheckout">Poursuivre</button>
             </div>
         </div>
     </div>
@@ -363,5 +461,23 @@ h1 {
 
 .btn-order {
     background: #3498db;
+}
+
+.stock-warning-modal {
+    max-width: 560px;
+}
+
+.warning-title {
+    margin-top: 0;
+    color: #c0392b;
+}
+
+.warning-list {
+    margin: 12px 0 18px;
+    padding-left: 20px;
+}
+
+.warning-list li {
+    margin-bottom: 8px;
 }
 </style>

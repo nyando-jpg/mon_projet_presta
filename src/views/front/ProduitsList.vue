@@ -6,6 +6,7 @@ import taxesService from '@/service/taxesService';
 const produits = ref(null);
 const categories = ref([]);
 const taxRatesByProductId = ref({});
+const stockDetailsByProductId = ref({});
 const filtres = ref({
     nom: '',
     categorie: '',
@@ -25,6 +26,43 @@ const loadProductTaxes = async (products) => {
     taxRatesByProductId.value = Object.fromEntries(entries);
 };
 
+const loadProductStocks = async (products) => {
+    const entries = await Promise.all((products || []).map(async (product) => {
+        const stockRows = Array.isArray(product.stockAvailables) ? product.stockAvailables : [];
+        const productId = String(product.id);
+
+        if (!stockRows.length) {
+            return [productId, {
+                hasCombinations: false,
+            rows: [{ label: 'Stock principal', quantity: Number(product.stockQuantity ?? product.quantity ?? 0) }]
+            }];
+        }
+
+        const stockManagement = await produitsService.getStockManagementRows(product);
+        const productStockQuantity = Number(stockManagement?.productStock?.quantity ?? product.stockQuantity ?? product.quantity ?? 0);
+        const combinationRows = Array.isArray(stockManagement?.combinations)
+            ? stockManagement.combinations.filter((row) => row && !row.disabled)
+            : [];
+
+        if (combinationRows.length > 0) {
+            return [productId, {
+                hasCombinations: true,
+                rows: combinationRows.map((row) => ({
+                    label: row.label || `Combinaison ${row.id}`,
+                    quantity: Number(row.quantity ?? 0)
+                }))
+            }];
+        }
+
+        return [productId, {
+            hasCombinations: false,
+      rows: [{ label: 'Stock principal', quantity: productStockQuantity }]
+        }];
+    }));
+
+    stockDetailsByProductId.value = Object.fromEntries(entries);
+};
+
 const getPriceTTC = (priceHT, productId) => {
     const rate = taxRatesByProductId.value[String(productId)] ?? 0;
     return taxesService.calculatePriceTTC(priceHT, rate).toFixed(2);
@@ -41,6 +79,7 @@ const chargerDonnees = async () => {
 
         if (produits.value?.products?.length) {
             await loadProductTaxes(produits.value.products);
+          await loadProductStocks(produits.value.products);
         }
 
         if (Array.isArray(catData)) {
@@ -74,17 +113,26 @@ onMounted(() => {
     chargerDonnees();
 });
 
-const getBadge = (dateAdd) => {
-    if (!dateAdd) return null;
+const getBadge = (availableDate) => {
+  if (!availableDate) return null;
 
     const now = new Date();
-    const dateProduit = new Date(dateAdd.replace(' ', 'T'));
+  const dateProduit = new Date(availableDate.replace(' ', 'T'));
     const diffInMs = now - dateProduit;
     const diffInDays = diffInMs / (1000 * 60 * 60 * 24);
 
     if (diffInDays <= 1) return 'hot';
     if (diffInDays <= 7) return 'new';
     return null;
+};
+
+const getStockDetails = (product) => {
+    const productId = String(product.id);
+  const productStockQuantity = Number(product.stockQuantity ?? product.quantity ?? 0);
+    return stockDetailsByProductId.value[productId] || {
+        hasCombinations: false,
+    rows: [{ label: 'Stock principal', quantity: productStockQuantity }]
+    };
 };
 </script>
 
@@ -130,8 +178,8 @@ const getBadge = (dateAdd) => {
         class="product-card"
         @click="$router.push(`/frontend/produits/${produit.id}`)"
       >
-        <div v-if="getBadge(produit.date_add)" :class="['badge', getBadge(produit.date_add)]">
-          {{ getBadge(produit.date_add).toUpperCase() }}
+        <div v-if="getBadge(produit.available_date)" :class="['badge', getBadge(produit.available_date)]">
+          {{ getBadge(produit.available_date).toUpperCase() }}
         </div>
 
         <div class="card-image">
@@ -143,6 +191,16 @@ const getBadge = (dateAdd) => {
           <h3>{{ produit.name }}</h3>
           <p class="product-price price-ht">HT: {{ produit.price }} €</p>
           <p class="product-price price-ttc">TTC: {{ getPriceTTC(produit.price, produit.id) }} €</p>
+          <div class="product-stock" v-if="getStockDetails(produit).hasCombinations">
+            <p class="product-stock-title">Stock</p>
+            <ul class="stock-list">
+              <li v-for="row in getStockDetails(produit).rows" :key="`${produit.id}-${row.label}`" class="stock-row">
+                <span class="stock-label">{{ row.label }}</span>
+                <span class="stock-quantity">{{ row.quantity }}</span>
+              </li>
+            </ul>
+          </div>
+          <p v-else class="product-stock stock-single">Stock: {{ getStockDetails(produit).rows[0]?.quantity ?? 0 }}</p>
         </div>
       </div>
 
@@ -285,6 +343,47 @@ h3 {
 
 .price-ttc {
   color: #2ecc71;
+}
+
+.product-stock {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2c3e50;
+}
+
+.product-stock-title {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7f8c8d;
+}
+
+.stock-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.stock-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9rem;
+}
+
+.stock-label {
+  color: #34495e;
+  font-weight: 600;
+}
+
+.stock-quantity,
+.stock-single {
+  color: #2ecc71;
+  font-weight: 800;
 }
 
 .no-results {

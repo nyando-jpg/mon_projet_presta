@@ -1,19 +1,19 @@
 export const resetTargets = [
   {
-    key: 'orders',
-    label: 'Commandes',
-    endpoint: '/orders',
-    collectionKey: 'orders',
-    itemKey: 'order',
-    defaultSelected: true,
-    skipIds: []
-  },
-  {
     key: 'order_details',
     label: 'Details de commande',
     endpoint: '/order_details',
     collectionKey: 'order_details',
     itemKey: 'order_detail',
+    defaultSelected: true,
+    skipIds: []
+  },
+  {
+    key: 'orders',
+    label: 'Commandes',
+    endpoint: '/orders',
+    collectionKey: 'orders',
+    itemKey: 'order',
     defaultSelected: true,
     skipIds: []
   },
@@ -27,6 +27,15 @@ export const resetTargets = [
     skipIds: []
   },
   {
+    key: 'addresses',
+    label: 'Adresses',
+    endpoint: '/addresses',
+    collectionKey: 'addresses',
+    itemKey: 'address',
+    defaultSelected: true,
+    skipIds: []
+  },
+  {
     key: 'customers',
     label: 'Clients',
     endpoint: '/customers',
@@ -36,11 +45,30 @@ export const resetTargets = [
     skipIds: [1]
   },
   {
-    key: 'addresses',
-    label: 'Adresses',
-    endpoint: '/addresses',
-    collectionKey: 'addresses',
-    itemKey: 'address',
+    key: 'specific_prices',
+    label: 'Prix specifiques',
+    endpoint: '/specific_prices',
+    collectionKey: 'specific_prices',
+    itemKey: 'specific_price',
+    defaultSelected: true,
+    skipIds: []
+  },
+  {
+    key: 'combinations',
+    label: 'Combinaisons',
+    endpoint: '/combinations',
+    collectionKey: 'combinations',
+    itemKey: 'combination',
+    defaultSelected: true,
+    skipIds: []
+  },
+  {
+    key: 'stock_availables',
+    label: 'Stocks disponibles',
+    endpoint: '/stock_availables',
+    collectionKey: 'stock_availables',
+    itemKey: 'stock_available',
+    deletable: false,
     defaultSelected: true,
     skipIds: []
   },
@@ -63,29 +91,11 @@ export const resetTargets = [
     skipIds: [1, 2]
   },
   {
-    key: 'combinations',
-    label: 'Combinaisons',
-    endpoint: '/combinations',
-    collectionKey: 'combinations',
-    itemKey: 'combination',
-    defaultSelected: false,
-    skipIds: []
-  },
-  {
     key: 'cart_rules',
     label: 'Regles panier',
     endpoint: '/cart_rules',
     collectionKey: 'cart_rules',
     itemKey: 'cart_rule',
-    defaultSelected: false,
-    skipIds: []
-  },
-  {
-    key: 'specific_prices',
-    label: 'Prix specifiques',
-    endpoint: '/specific_prices',
-    collectionKey: 'specific_prices',
-    itemKey: 'specific_price',
     defaultSelected: false,
     skipIds: []
   },

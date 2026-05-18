@@ -17,9 +17,51 @@ const selectedOptions = ref({});
 const combinationId = ref(null);
 const displayPrice = ref(null);
 const taxRate = ref(null);
+const stockQuantity = ref(null);
 const panier = ref([]);
 const showSuccessModal = ref(false);
+const showStockWarningModal = ref(false);
+const pendingAddToCart = ref(false);
 const lastAddedItem = ref(null);
+
+const resolveStockRowForCurrentSelection = () => {
+    const stockRows = Array.isArray(produit.value?.stockAvailables) ? produit.value.stockAvailables : [];
+
+    if (!stockRows.length) {
+        return null;
+    }
+
+    if (!optionGroups.value.length) {
+        return stockRows.find((stock) => String(stock.id_product_attribute || '') === '0') || stockRows[0] || null;
+    }
+
+    if (!combinationId.value) {
+        return null;
+    }
+
+    return stockRows.find((stock) => String(stock.id_product_attribute || '') === String(combinationId.value)) || null;
+};
+
+const loadStockQuantity = async () => {
+    if (!produit.value) {
+        stockQuantity.value = null;
+        return;
+    }
+
+    const stockRow = resolveStockRowForCurrentSelection();
+
+    if (!stockRow?.id) {
+        stockQuantity.value = Number(produit.value.stockQuantity ?? produit.value.quantity ?? 0);
+        return;
+    }
+
+    try {
+        const stock = await produitsService.getStockQuantity(stockRow.id);
+        stockQuantity.value = Number(stock?.quantity ?? 0);
+    } catch (error) {
+        stockQuantity.value = Number(produit.value.stockQuantity ?? produit.value.quantity ?? 0);
+    }
+};
 
 
 // Fonction pour charger la combinaison correspondante aux options sélectionnées
@@ -30,6 +72,7 @@ const loadCombination = async () => {
     if (!optionGroups.value.length) {
         combinationId.value = '0';
         displayPrice.value = parseFloat(produit.value.price || 0).toFixed(2);
+        await loadStockQuantity();
         return;
     }
 
@@ -52,9 +95,11 @@ const loadCombination = async () => {
         const combinationImpact = parseFloat(result.price || 0);
         const finalPrice = Number.isFinite(basePrice) ? basePrice + (Number.isFinite(combinationImpact) ? combinationImpact : 0) : 0;
         displayPrice.value = finalPrice.toFixed(2);
+        await loadStockQuantity();
     } else {
         combinationId.value = null;
         displayPrice.value = null;
+        stockQuantity.value = null;
     }
 };
 
@@ -66,6 +111,17 @@ const currentPriceHT = computed(() => {
 const currentPriceTTC = computed(() => {
     const rawPrice = displayPrice.value ?? produit.value?.price ?? 0;
     return taxesService.calculatePriceTTC(rawPrice, taxRate.value ?? 0).toFixed(2);
+});
+
+const hasEnoughStock = computed(() => {
+    const availableStock = Number(stockQuantity.value ?? produit.value?.quantity ?? 0);
+    const wantedQuantity = Number(quantite.value || 0);
+
+    if (!Number.isFinite(availableStock) || !Number.isFinite(wantedQuantity)) {
+        return true;
+    }
+
+    return wantedQuantity <= availableStock;
 });
 
 onMounted(async () => {
@@ -177,6 +233,32 @@ const ajouterAuPanier = async () => {
     }
 };
 
+const commanderProduit = () => {
+    if (!combinationId.value && combinationId.value !== '0') return;
+
+    if (!hasEnoughStock.value) {
+        pendingAddToCart.value = true;
+        showStockWarningModal.value = true;
+        return;
+    }
+
+    ajouterAuPanier();
+};
+
+const annulerStockWarning = () => {
+    showStockWarningModal.value = false;
+    pendingAddToCart.value = false;
+};
+
+const poursuivreStockWarning = async () => {
+    showStockWarningModal.value = false;
+
+    if (pendingAddToCart.value) {
+        pendingAddToCart.value = false;
+        await ajouterAuPanier();
+    }
+};
+
 const getSubTotal = () => {
     return panier.value.reduce((sum, item) => sum + (parseFloat(item.priceHT) * item.quantity), 0).toFixed(2);
 };
@@ -212,6 +294,10 @@ const allerAuPanier = () => { router.push('/frontend/panier'); };
                 <strong>Prix TTC :</strong> 
                 <span class="price-ttc">{{ currentPriceTTC }} €</span>
             </p>
+            <p>
+                <strong>Stock :</strong>
+                <span class="stock-value">{{ stockQuantity ?? produit.quantity ?? 0 }}</span>
+            </p>
             <p><strong>État :</strong> {{ produit.condition }}</p>
         </div>
 
@@ -236,9 +322,26 @@ const allerAuPanier = () => { router.push('/frontend/panier'); };
                 </div>
             </div>
 
-            <button class="btn-panier" @click="ajouterAuPanier" :disabled="!combinationId">
-                🛒 Ajouter au Panier
+            <button class="btn-panier" @click="commanderProduit" :disabled="!combinationId">
+                🛒 Commander
             </button>
+        </div>
+    </div>
+
+    <div v-if="showStockWarningModal" class="modal-overlay" @click="annulerStockWarning">
+        <div class="modal-content stock-warning-modal" @click.stop>
+            <button class="modal-close" @click="annulerStockWarning">✕</button>
+            <h2 class="warning-title">Stock insuffisant</h2>
+            <p>
+                La quantité demandée est de <strong>{{ quantite }}</strong> alors que le stock disponible est de
+                <strong>{{ stockQuantity ?? produit.quantity ?? 0 }}</strong>.
+            </p>
+            <p>Voulez-vous annuler ou poursuivre quand même ?</p>
+
+            <div class="modal-buttons">
+                <button class="btn-continue" @click="annulerStockWarning">Annuler</button>
+                <button class="btn-order" @click="poursuivreStockWarning">Poursuivre</button>
+            </div>
         </div>
     </div>
 
@@ -475,6 +578,15 @@ const allerAuPanier = () => { router.push('/frontend/panier'); };
     gap: 10px;
 }
 
+
+.stock-warning-modal {
+    max-width: 520px;
+}
+
+.warning-title {
+    margin-top: 0;
+    color: #c0392b;
+}
 .btn-order {
     flex: 1;
     padding: 12px;
@@ -504,6 +616,12 @@ const allerAuPanier = () => { router.push('/frontend/panier'); };
     color: #2ecc71;
     font-weight: bold;
     font-size: 1.4em;
+    margin-left: 10px;
+}
+
+.stock-value {
+    font-weight: bold;
+    color: #2c3e50;
     margin-left: 10px;
 }
 </style>
