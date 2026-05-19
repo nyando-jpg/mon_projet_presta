@@ -108,12 +108,19 @@
       const date = order.date_add.split(' ')[0];
       //recherche dans groups si la date existe déjà, sinon on crée une nouvelle entrée avec count=0 et totaux=0
       if (!groups[date]) {
-        groups[date] = { date, count: 0, totalTTC: 0, totalHT: 0, paidTTC: 0, paidHT: 0 };
-      }
+          groups[date] = { date, count: 0, totalTTC: 0, totalHT: 0, totalTTCSansLivree: 0, totalHTSansLivree: 0, paidTTC: 0, paidHT: 0 };
+        }
       // On ajoute +1 au compteur et les montants TTC et HT au total du jour
       groups[date].count += 1;
-      groups[date].totalTTC += Number(order.totalTTC) || 0;
-      groups[date].totalHT += Number(order.totalHT) || 0;
+      const tTTC = Number(order.totalTTC) || 0;
+      const tHT = Number(order.totalHT) || 0;
+      groups[date].totalTTC += tTTC;
+      groups[date].totalHT += tHT;
+      // Ajouter au total "sans livré" uniquement si l'état n'est pas "livré" (id 5)
+      if (Number(order.current_state) !== 5) {
+        groups[date].totalTTCSansLivree += tTTC;
+        groups[date].totalHTSansLivree += tHT;
+      }
     });
 
     // Convertir l'objet en tableau et trier par date décroissante
@@ -121,7 +128,10 @@
       .map((day) => ({
         ...day,
         paidTTC: paidDailyStats.value[day.date]?.paidTTC || 0,
-        paidHT: paidDailyStats.value[day.date]?.paidHT || 0
+        paidHT: paidDailyStats.value[day.date]?.paidHT || 0,
+        // valeurs sans livré déjà calculées
+        totalTTCSansLivree: day.totalTTCSansLivree || 0,
+        totalHTSansLivree: day.totalHTSansLivree || 0
       }))
       .sort((a, b) => new Date(b.date) - new Date(a.date));
   });
