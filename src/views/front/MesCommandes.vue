@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue';
 import cartsService from '@/service/cartsService';
+import addressesService from '@/service/adressesService';
 import ordersService from '@/service/ordersService';
 import { enrichCartSummary } from '@/utils/orderMetrics';
 
@@ -11,13 +12,17 @@ const historyLoading = ref(false);
 const selectedItem = ref(null);
 const selectedHistory = ref([]);
 const modalOpen = ref(false);
+const duplicatingId = ref(null);
+const duplicateEditorId = ref(null);
+const duplicateQuantities = ref({});
 
 const formatDate = (dateStr) => {
   if (!dateStr) return 'N/A';
   return new Date(dateStr).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
 };
 
-onMounted(async () => {
+const loadActivities = async () => {
+  loading.value = true;
   try {
     const customer = JSON.parse(localStorage.getItem('customer'));
     if (!customer?.id) return;
@@ -43,11 +48,17 @@ onMounted(async () => {
       // On cherche si une commande est liée à ce panier
       const linkedOrder = allOrders.find(o => String(o.id_cart) === String(cart.id));
       const summary = cartSummaries.get(String(cart.id)) || { cartDate: cart.date_add, itemCount: 0, totalTTC: 0 };
+      if (duplicateQuantities.value[String(cart.id)] === undefined) {
+        duplicateQuantities.value[String(cart.id)] = 1;
+      }
       
       return {
         cartId: cart.id,
+        cart,
         date: summary.cartDate || cart.date_add,
         itemCount: summary.itemCount,
+        totalHT: summary.totalHT,
+        totalTTC: summary.totalTTC,
         total: linkedOrder ? Number(linkedOrder.total_paid) : summary.totalTTC,
         order: linkedOrder || null, // null si pas de commande = "Panier en cours"
       };
@@ -58,7 +69,9 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+};
+
+onMounted(loadActivities);
 
 const getState = (stateId) => {
   return orderStates.value.find(s => String(s.id) === String(stateId)) || { name: 'Inconnu', color: '#999' };
@@ -115,6 +128,152 @@ const closeHistory = () => {
   selectedHistory.value = [];
   historyLoading.value = false;
 };
+
+const getDuplicateMultiplier = (cartId) => Math.max(1, parseInt(duplicateQuantities.value[cartId] || 1, 10) || 1);
+
+const getDuplicateCustomerId = (sourceOrder, sourceCart) => {
+  const customer = JSON.parse(localStorage.getItem('customer'));
+  return String(customer?.id || sourceOrder.id_customer || sourceCart.id_customer || '').trim();
+};
+
+const getDuplicateAddressId = async (sourceOrder, customerId) => {
+  const directAddressId = String(sourceOrder.id_address_delivery || sourceOrder.id_address_invoice || '').trim();
+  if (directAddressId) return directAddressId;
+
+  const addresses = await addressesService.getAddressesByCustomer(customerId);
+  return String(addresses?.[0]?.id || '').trim();
+};
+
+const getDuplicateTotals = (item, sourceOrder) => {
+  const shippingTotal = Number(sourceOrder.total_shipping || sourceOrder.total_shipping_tax_incl || 0) || 0;
+  const totalHT = Number(item.totalHT || sourceOrder.total_paid_tax_excl || sourceOrder.total_products || 0) || 0;
+  const totalProductsTTC = Number(item.totalTTC || sourceOrder.total_products_wt || 0) || 0;
+
+  return {
+    shippingTotal,
+    totalHT,
+    totalProductsTTC,
+    totalPaidTTC: totalProductsTTC + shippingTotal
+  };
+};
+
+const createDuplicatedCart = async ({ sourceRows, customerId, multiplier }) => {
+  let newCart = null;
+
+  for (const [index, row] of sourceRows.entries()) {
+    const payload = {
+      id_customer: customerId,
+      id_product: String(row.id_product || ''),
+      id_product_attribute: String(row.id_product_attribute || '0'),
+      quantity: String((Math.max(1, parseInt(row.quantity || 0, 10) || 1)) * multiplier)
+    };
+
+    if (index > 0 && newCart?.id) {
+      payload.id_cart = newCart.id;
+    }
+
+    newCart = await cartsService.addToCart(payload);
+  }
+
+  return newCart;
+};
+
+const duplicateOrder = async (item) => {
+  const sourceOrder = item?.order;
+  const sourceCart = item?.cart;
+
+  if (!sourceOrder || !sourceCart) {
+    alert('Aucune commande à dupliquer pour cette ligne.');
+    return;
+  }
+
+  duplicatingId.value = item.cartId;
+
+  try {
+    const multiplier = getDuplicateMultiplier(item.cartId);
+    const customerId = getDuplicateCustomerId(sourceOrder, sourceCart);
+
+    if (!customerId) {
+      throw new Error('Client introuvable');
+    }
+
+    const sourceRows = sourceCart?.associations?.cart_rows?.cart_row || [];
+    if (!sourceRows.length) {
+      throw new Error('Aucun produit à copier');
+    }
+
+    const stockCheck = await ordersService.checkDuplicateStockAvailability(sourceCart, multiplier);
+    if (!stockCheck.ok) {
+      const details = stockCheck.shortages
+        .map((line) => `Produit ${line.id_product}${line.id_product_attribute !== '0' ? ` / déclinaison ${line.id_product_attribute}` : ''} : restant ${line.available}, manquant ${line.missing}`)
+        .join('\n');
+
+      alert(`Stock insuffisant pour la duplication :\n${details}`);
+      return;
+    }
+
+    const addressId = await getDuplicateAddressId(sourceOrder, customerId);
+
+    if (!addressId) {
+      throw new Error('Adresse introuvable');
+    }
+
+    const carrierId = String(sourceOrder.id_carrier || '1').trim() || '1';
+    const { shippingTotal, totalHT, totalProductsTTC, totalPaidTTC } = getDuplicateTotals(item, sourceOrder);
+    const newCart = await createDuplicatedCart({ sourceRows, customerId, multiplier });
+
+    if (!newCart?.id) {
+      throw new Error('Impossible de créer le panier dupliqué');
+    }
+
+    await cartsService.updateCartAddresses(newCart.id, addressId, carrierId);
+
+    const result = await ordersService.createOrder({
+      id_customer: customerId,
+      id_cart: newCart.id,
+      id_address: addressId,
+      id_carrier: carrierId,
+      total_paid_tax_excl: String(totalHT),
+      total_paid_tax_incl: String(totalPaidTTC),
+      total_paid: String(totalPaidTTC),
+      total_products: String(totalHT),
+      total_products_wt: String(totalProductsTTC),
+      shipping_cost: String(shippingTotal)
+    });
+
+    if (result?.id) {
+      await ordersService.updateOrderState(result.id, 5);
+      await ordersService.consumeOrderReservedStock(newCart);
+    }
+
+    await loadActivities();
+    alert(`✅ Commande dupliquée et livrée avec succès : n°${result.id}`);
+  } catch (error) {
+    console.error('Erreur duplication commande:', error);
+    alert(`Erreur lors de la duplication: ${error?.message || 'inconnue'}`);
+  } finally {
+    duplicatingId.value = null;
+  }
+};
+
+const openDuplicateEditor = (item) => {
+  const cartId = String(item?.cartId || '');
+  if (!cartId) return;
+
+  if (duplicateQuantities.value[cartId] === undefined) {
+    duplicateQuantities.value[cartId] = 1;
+  }
+
+  duplicateEditorId.value = cartId;
+};
+
+const confirmDuplicateOrder = async (item) => {
+  const cartId = String(item?.cartId || '');
+  if (!cartId) return;
+
+  duplicateEditorId.value = cartId;
+  await duplicateOrder(item);
+};
 </script>
 <template>
   <div class="my-account">
@@ -152,6 +311,43 @@ const closeHistory = () => {
           </template>
 
           <span class="item-count">{{ item.itemCount }} produit(s)</span>
+
+          <button
+            v-if="item.order"
+            type="button"
+            class="duplicate-btn"
+            :disabled="duplicatingId === item.cartId"
+            @click.stop="openDuplicateEditor(item)"
+          >
+            Dupliquer
+          </button>
+          <input
+            v-if="item.order && duplicateEditorId === String(item.cartId)"
+            v-model="duplicateQuantities[item.cartId]"
+            type="number"
+            min="1"
+            step="1"
+            class="duplicate-qty"
+            @click.stop
+          />
+          <button
+            v-if="item.order && duplicateEditorId === String(item.cartId)"
+            type="button"
+            class="duplicate-confirm-btn"
+            :disabled="duplicatingId === item.cartId"
+            @click.stop="confirmDuplicateOrder(item)"
+          >
+            Valider
+          </button>
+          <button
+            v-if="item.order && duplicateEditorId === String(item.cartId)"
+            type="button"
+            class="duplicate-cancel-btn"
+            @click.stop="duplicateEditorId = null"
+          >
+            Annuler
+          </button>
+          <span v-if="duplicatingId === item.cartId" class="dup-loader">⌛</span>
         </div>
 
         <div class="col-price">
@@ -236,6 +432,54 @@ h2 { font-size: 1.2rem; margin-bottom: 20px; color: #333; }
   border-radius: 999px;
 }
 .order-ref { font-family: monospace; font-weight: bold; background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+
+.duplicate-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #1976d2;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.duplicate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.duplicate-qty {
+  width: 64px;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+
+.duplicate-confirm-btn,
+.duplicate-cancel-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.duplicate-confirm-btn {
+  background: #16a34a;
+  color: white;
+}
+
+.duplicate-cancel-btn {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.dup-loader {
+  font-size: 0.9rem;
+}
 
 .state-dot {
   padding: 3px 10px;
