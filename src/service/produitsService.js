@@ -510,6 +510,15 @@ export default {
         }
     },
 
+
+
+
+
+//STOCKS : Ces méthodes font le lien entre produitsService et stockService pour éviter que les composants aient à faire deux appels séparés pour gérer les stocks liés à un produit.
+
+
+
+
     // Caches simples en mémoire pour éviter les appels redondants lors du calcul du total d'un panier
     async getStockManagementRows(product) {
         return stockService.getStockManagementRows(product);

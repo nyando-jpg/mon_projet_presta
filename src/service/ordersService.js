@@ -63,18 +63,30 @@ const updateStockAvailableQuantity = async (stockNode, quantity) => {
         throw new Error('Stock disponible introuvable.');
     }
 
-    const xmlBuilder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '', format: false });
+    // IMPORTANT: On utilise le comportement standard de fast-xml-parser pour les attributs (préfixe @_ )
+    const xmlBuilder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@_', format: false });
+    
+    const stockId = extractVal(stockNode.id);
+    const idProductAttribute = extractVal(stockNode.id_product_attribute);
+    const idShop = extractVal(stockNode.id_shop);
+    const idShopGroup = extractVal(stockNode.id_shop_group);
+    const dependsOnStock = extractVal(stockNode.depends_on_stock);
+    const outOfStock = extractVal(stockNode.out_of_stock);
+
     const stockPayload = {
         prestashop: {
             stock_available: {
-                id: extractVal(stockNode.id),
+                // 👇 C'EST ÇA QUI FIXE L'ERREUR 90 : On force l'attribut id="..." sur la balise <stock_available>
+                '@_id': stockId, 
+                
+                id: stockId,
                 id_product: extractVal(stockNode.id_product),
-                id_product_attribute: extractVal(stockNode.id_product_attribute || '0') || '0',
-                id_shop: extractVal(stockNode.id_shop || '1') || '1',
-                id_shop_group: extractVal(stockNode.id_shop_group || '0') || '0',
+                id_product_attribute: idProductAttribute !== '' ? idProductAttribute : '0',
+                id_shop: idShop !== '' ? idShop : '1',
+                id_shop_group: idShopGroup !== '' ? idShopGroup : '0',
                 quantity: String(Math.max(0, quantity)),
-                depends_on_stock: extractVal(stockNode.depends_on_stock || '0') || '0',
-                out_of_stock: extractVal(stockNode.out_of_stock || '2') || '2'
+                depends_on_stock: dependsOnStock !== '' ? dependsOnStock : '0',
+                out_of_stock: outOfStock !== '' ? outOfStock : '2'
             }
         }
     };
@@ -82,16 +94,16 @@ const updateStockAvailableQuantity = async (stockNode, quantity) => {
     const xml = xmlBuilder.build(stockPayload);
 
     try {
-        await axios.put(`${BASE_URL}/stock_availables/${extractVal(stockNode.id)}`, xml, {
+        await axios.put(`${BASE_URL}/stock_availables/${stockId}`, xml, {
             auth: { username: WS_KEY, password: '' },
             headers: { 'Content-Type': 'application/xml' }
         });
     } catch (error) {
-        if (error?.response?.status === 400) {
-            console.warn(`Mise à jour stock ${extractVal(stockNode.id)} appliquée malgré un 400 retourné par PrestaShop.`);
-            return;
+        if (error?.response?.data) {
+            console.error(`❌ Échec PrestaShop stock ${stockId} :`, error.response.data);
+        } else {
+            console.error(`❌ Erreur réseau / Axios stock ${stockId} :`, error.message);
         }
-
         throw error;
     }
 };
@@ -188,22 +200,29 @@ const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderI
 
     const sign = delta > 0 ? 1 : -1;
     const physicalQuantity = Math.abs(delta);
-    const idEmployee = await resolveStockMovementEmployeeId();
-    const idStockMovementReason = await resolveStockMovementReasonId(sign);
-    const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '', format: false });
+    
+    let idReasonRaw = await resolveStockMovementReasonId(sign);
+    let idStockMovementReason = Number.parseInt(extractVal(idReasonRaw), 10);
+    if (!idStockMovementReason || Number.isNaN(idStockMovementReason)) {
+        idStockMovementReason = sign > 0 ? 1 : 2;
+    }
+
+    const builder = new XMLBuilder({ 
+        ignoreAttributes: true, 
+        format: false 
+    });
 
     const movementPayload = {
         prestashop: {
             stock_movement: {
-                id_stock: Number(extractVal(stockNode?.id)) || 0,
-                id_order: orderId ? Number(orderId) : 0,
-                id_product: Number(extractVal(stockNode?.id_product)) || 0,
-                id_product_attribute: Number(extractVal(stockNode?.id_product_attribute || '0')) || 0,
-                id_stock_mvt_reason: Number(idStockMovementReason) || 0,
-                id_employee: Number(idEmployee) || 1,
-                physical_quantity: physicalQuantity,
-                sign,
-                price_te: '0.000000',
+                id_stock: String(extractVal(stockNode?.id)),
+                id_employee: "1", 
+                id_stock_mvt_reason: String(idStockMovementReason),
+                id_order: orderId ? String(orderId) : "0",
+                physical_quantity: String(physicalQuantity),
+                sign: String(sign),
+                price_te: "0.000000",
+                // 👇 ON REAJOUTE LA DATE REQUISE ICI
                 date_add: new Date().toISOString().slice(0, 19).replace('T', ' ')
             }
         }
@@ -211,10 +230,24 @@ const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderI
 
     const xml = builder.build(movementPayload);
 
-    await axios.post(`${BASE_URL}/stock_movements`, xml, {
-        auth: { username: WS_KEY, password: '' },
-        headers: { 'Content-Type': 'application/xml' }
-    });
+    // 🔬 ESPION : Affiche le XML généré dans ta console de dev
+    console.log("--- XML ENVOYÉ À PRESTASHOP ---");
+    console.log(xml);
+    console.log("--------------------------------");
+
+    try {
+        await axios.post(`${BASE_URL}/stock_movements`, xml, {
+            auth: { username: WS_KEY, password: '' },
+            headers: { 'Content-Type': 'application/xml' }
+        });
+    } catch (error) {
+        if (error?.response?.data) {
+            console.error(`❌ Erreur critique Stock Movement :`, error.response.data);
+        } else {
+            console.error(`❌ Erreur réseau Stock Movement :`, error.message);
+        }
+        throw error;
+    }
 };
 
 /**

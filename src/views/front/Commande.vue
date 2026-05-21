@@ -639,24 +639,7 @@ onUnmounted(() => {
                 <div v-if="currentStep === 2" class="form-step">
                     <h2>2. Adresses</h2>
 
-                    <div v-if="addressesList.length" class="saved-addresses">
-                        <h3>Adresses enregistrées</h3>
-                        <table class="addresses-table">
-                            <thead>
-                                <tr><th>Alias</th><th>Adresse</th><th>CP</th><th>Ville</th><th>Téléphone</th><th></th></tr>
-                            </thead>
-                            <tbody>
-                                <tr v-for="(a, idx) in addressesList" :key="a.id">
-                                    <td>{{ a.alias || (a.firstname + ' ' + a.lastname) }}</td>
-                                    <td>{{ a.address1 }}</td>
-                                    <td>{{ a.postcode }}</td>
-                                    <td>{{ a.city }}</td>
-                                    <td>{{ a.phone }}</td>
-                                    <td><button @click.prevent="selectAddress(a)">Utiliser</button></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                    <!-- Adresses enregistrées supprimées: affichage retiré par préférence utilisateur -->
 
                     <div class="form-group">
                         <label>Adresse *</label>
