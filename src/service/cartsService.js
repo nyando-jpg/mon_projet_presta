@@ -52,6 +52,9 @@ const transformerCart = (cart) => {
         id: extractVal(cart.id) || '',
         id_customer: extractVal(cart.id_customer) || '',
         id_lang: extractVal(cart.id_lang) || '',
+        id_address_delivery: extractVal(cart.id_address_delivery) || '0',
+        id_address_invoice: extractVal(cart.id_address_invoice) || '0',
+        id_carrier: extractVal(cart.id_carrier) || '0',
         date_add: extractVal(cart.date_add) || '',
         associations: {
             cart_rows: {

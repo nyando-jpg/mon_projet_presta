@@ -250,6 +250,18 @@ const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderI
     }
 };
 
+const normalizeDuplicateStockRows = (cart) => {
+    const rows = asArray(cart?.associations?.cart_rows?.cart_row || []);
+
+    return rows
+        .map((row) => ({
+            id_product: extractVal(row?.id_product),
+            id_product_attribute: extractVal(row?.id_product_attribute || '0') || '0',
+            quantity: Number(extractVal(row?.quantity || 0)) || 0
+        }))
+        .filter((row) => row.id_product && row.quantity > 0);
+};
+
 /**
  * transformerOrder : Le "Nettoyeur"
  * Transforme une commande XML brute en objet JS propre et utilisable.
@@ -258,16 +270,25 @@ const transformerOrder = (o) => {
     // Extraire les totaux TTC et HT si disponibles
     const totalTTC = parseFloat(extractVal(o.total_paid_tax_incl || o.total_paid)) || 0;
     const totalHT = parseFloat(extractVal(o.total_paid_tax_excl || o.total_products)) || 0;
+    const totalShipping = parseFloat(extractVal(o.total_shipping_tax_incl || o.total_shipping)) || 0;
     
     return {
         id: extractVal(o.id),
         reference: extractVal(o.reference),
         id_customer: extractVal(o.id_customer),
         id_cart: extractVal(o.id_cart),
+        id_address_delivery: extractVal(o.id_address_delivery),
+        id_address_invoice: extractVal(o.id_address_invoice),
+        id_carrier: extractVal(o.id_carrier),
         // Montants TTC (Toutes Taxes Comprises) et HT (Hors Taxes)
         total_paid: totalTTC.toFixed(2), // TTC par défaut (montant réel payé)
         total_paid_tax_incl: totalTTC.toFixed(2), // TTC explicite
         total_paid_tax_excl: totalHT.toFixed(2), // HT explicite
+        total_products: totalHT.toFixed(2),
+        total_products_wt: totalTTC.toFixed(2),
+        total_shipping: totalShipping.toFixed(2),
+        total_shipping_tax_incl: totalShipping.toFixed(2),
+        total_shipping_tax_excl: totalShipping.toFixed(2),
         payment: extractVal(o.payment),
         date_add: extractVal(o.date_add),
         current_state: extractVal(o.current_state),
@@ -649,6 +670,33 @@ export default {
             console.error('Erreur récupération historique commande:', error);
             throw error;
         }
+    },
+
+    async checkDuplicateStockAvailability(cart, multiplier = 1) {
+        const stockRows = normalizeDuplicateStockRows(cart);
+        const factor = Math.max(1, parseInt(multiplier, 10) || 1);
+        const shortages = [];
+
+        for (const row of stockRows) {
+            const requestedQuantity = row.quantity * factor;
+            const stockNode = await getStockAvailableNode(row.id_product, row.id_product_attribute);
+            const availableQuantity = Number(extractVal(stockNode?.quantity)) || 0;
+
+            if (availableQuantity < requestedQuantity) {
+                shortages.push({
+                    id_product: row.id_product,
+                    id_product_attribute: row.id_product_attribute,
+                    requested: requestedQuantity,
+                    available: availableQuantity,
+                    missing: requestedQuantity - availableQuantity
+                });
+            }
+        }
+
+        return {
+            ok: shortages.length === 0,
+            shortages
+        };
     },
 
     // Met à jour l'état d'une commande en créant une nouvelle entrée dans l'historique
