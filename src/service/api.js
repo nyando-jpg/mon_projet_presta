@@ -2,17 +2,15 @@ import axios from 'axios';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
 
-const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
-const BASE_URL = 'http://localhost/prestashop1/api';
+const WS_KEY = 's2ijjJ0QhGCniJ887IKfr1zgWPUp4y55';
+const BASE_URL = import.meta.env.VITE_PRESTASHOP_API_BASE_URL || '/prestashop_edition_classic_version_8.2.6_test/api';
 
-// Default to the Vite proxy path if no explicit API URL is provided in env.
-const urlBase = 'http://localhost/prestashop1/api';
-const apiKey = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
+const apiKey = 's2ijjJ0QhGCniJ887IKfr1zgWPUp4y55';
 const basicAuthHeader = `Basic ${btoa(`${apiKey}:`)}`;
 
 export const api = axios.create({
   // Utilise l'URL exacte qui fonctionne
-  baseURL: urlBase,
+  baseURL: BASE_URL,
   params: {
     ws_key: apiKey,
     output_format: 'JSON'
@@ -20,14 +18,14 @@ export const api = axios.create({
 });
 
 const rawApi = axios.create({
-  baseURL: urlBase,
+  baseURL: BASE_URL,
   params: {
     ws_key: apiKey
   }
 });
 
 const rawApiNoAuth = axios.create({
-  baseURL: urlBase
+  baseURL: BASE_URL
 });
 
 const rawNoBaseAuth = axios.create({

@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 
-const BASE_URL = 'http://localhost/prestashop1/api';
-const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
+const BASE_URL = import.meta.env.VITE_PRESTASHOP_API_BASE_URL || '/prestashop_edition_classic_version_8.2.6_test/api';
+const WS_KEY = 's2ijjJ0QhGCniJ887IKfr1zgWPUp4y55';
 
 // Utilitaire pour forcer un tableau (PrestaShop XML quirk)
 const asArray = (data) => {
