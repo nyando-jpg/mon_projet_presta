@@ -689,13 +689,20 @@ export default {
             await updateStockAvailableQuantity(stockNode, nextQuantity);
             updated += 1;
 
-            await createStockMovement({
-                stockNode,
-                oldQuantity: currentQuantity,
-                newQuantity: nextQuantity,
-                orderId: extractVal(order?.id)
-            });
-            movements += 1;
+            try {
+                await createStockMovement({
+                    stockNode,
+                    oldQuantity: currentQuantity,
+                    newQuantity: nextQuantity,
+                    orderId: extractVal(order?.id)
+                });
+                movements += 1;
+            } catch (movementError) {
+                console.warn(
+                    `Mouvement de stock non enregistré pour la commande ${extractVal(order?.id)}:`,
+                    movementError?.response?.data || movementError?.message || movementError
+                );
+            }
         }
 
         return { updated, movements };
