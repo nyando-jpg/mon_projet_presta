@@ -1,4 +1,4 @@
-import { getXml, postXml, putXml } from './api';
+import { getXml, postXml, putXml, formatApiError } from './api';
 import { runResetForTargets } from './resetService';
 import { resetTargets } from './resetTargets';
 
@@ -10,25 +10,88 @@ export const rollbackProducts = async (logCallback) => {
   logCallback('info', 'Réinitialisation terminée. L\'import a été annulé.');
 };
 
-function normalizeAvailabilityDate(rawValue) {
-  if (rawValue == null) return null;
+function extractText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'object') return String(value['#text'] ?? value['@_id'] ?? value.id ?? '');
+  return '';
+}
 
-  const value = String(rawValue).trim();
-  if (value === '') return null;
+let defaultCountryIdCache = null;
 
-  // Accepte DD/MM/YYYY ou DD-MM-YYYY
-  let match = value.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
-  if (match) {
-    return `${match[3]}-${match[2]}-${match[1]}`;
+async function getDefaultCountryId() {
+  if (defaultCountryIdCache) return defaultCountryIdCache;
+  try {
+    const configResp = await getXml('/configurations?filter[name]=[PS_COUNTRY_DEFAULT]&display=full');
+    const config = configResp?.prestashop?.configurations?.configuration;
+    const first = Array.isArray(config) ? config[0] : config;
+    const val = extractText(first?.value);
+    defaultCountryIdCache = val || '0';
+  } catch (e) {
+    defaultCountryIdCache = '0';
+  }
+  return defaultCountryIdCache;
+}
+
+async function createTaxAndGroup(taxRate, logCallback) {
+  const countryId = await getDefaultCountryId();
+
+  const taxPayload = {
+    prestashop: {
+      tax: {
+        active: 1,
+        rate: Number(taxRate).toFixed(2),
+        name: {
+          language: {
+            '@_id': '1',
+            '#text': `Auto ${Number(taxRate).toFixed(2)}%`
+          }
+        }
+      }
+    }
+  };
+
+  const taxResp = await postXml('/taxes', taxPayload);
+  const taxId = extractText(taxResp?.prestashop?.tax?.id);
+  if (!taxId) {
+    throw new Error(`Impossible de creer la taxe ${taxRate}%`);
   }
 
-  // Accepte YYYY-MM-DD ou YYYY/MM/DD
-  match = value.match(/^(\d{4})[\/-](\d{2})[\/-](\d{2})$/);
-  if (match) {
-    return `${match[1]}-${match[2]}-${match[3]}`;
+  const groupPayload = {
+    prestashop: {
+      tax_rule_group: {
+        name: `Auto ${Number(taxRate).toFixed(2)}%`,
+        active: 1
+      }
+    }
+  };
+
+  const groupResp = await postXml('/tax_rule_groups', groupPayload);
+  const groupId = extractText(groupResp?.prestashop?.tax_rule_group?.id);
+  if (!groupId) {
+    throw new Error(`Impossible de creer le groupe de taxe ${taxRate}%`);
   }
 
-  return null;
+  const rulePayload = {
+    prestashop: {
+      tax_rule: {
+        id_tax_rules_group: groupId,
+        id_country: countryId || '0',
+        id_state: 0,
+        zipcode_from: 0,
+        zipcode_to: 0,
+        behavior: 0,
+        description: `Auto ${Number(taxRate).toFixed(2)}%`,
+        id_tax: taxId
+      }
+    }
+  };
+
+  await postXml('/tax_rules', rulePayload);
+  if (logCallback) {
+    logCallback('success', `Groupe de taxe cree pour ${taxRate}% (id ${groupId}).`);
+  }
+  return groupId;
 }
 
 export const processProductImport = async (data, logCallback) => {
@@ -109,13 +172,16 @@ export const processProductImport = async (data, logCallback) => {
       const rawDate = row.date_availability_produit;
       let formattedDate = null;
 
-      if (rawDate != null && String(rawDate).trim() !== '') {
-        formattedDate = normalizeAvailabilityDate(rawDate);
+      if (rawDate && rawDate.trim() !== '') {
+        const trimmedDate = rawDate.trim();
+        const dateRegexDmy = /^\d{2}\/\d{2}\/\d{4}$/;
 
-        if (!formattedDate) {
-          logCallback('error', `Ligne ${index + 1} ignorée : La date ("${rawDate}") est invalide. Formats acceptés : DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD.`);
-          continue;
+        if (!dateRegexDmy.test(trimmedDate)) {
+          throw new Error(`La date ("${rawDate}") ne respecte pas le format strict DD/MM/YYYY.`);
         }
+
+        const parts = trimmedDate.split('/');
+        formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
       } else {
         logCallback('warn', `Ligne ${index + 1} : Aucune date renseignée. La date sera vide par défaut.`);
       }
@@ -133,20 +199,35 @@ export const processProductImport = async (data, logCallback) => {
           if (groups) {
             const groupList = Array.isArray(groups) ? groups : [groups];
             for (const group of groupList) {
-              const rulesResp = await getXml(`/tax_rules?filter[id_tax_rules_group]=[${group.id}]&display=full`);
+              const groupId = extractText(group.id);
+              if (!groupId) continue;
+              const rulesResp = await getXml(`/tax_rules?filter[id_tax_rules_group]=[${groupId}]&display=full`);
               const rules = rulesResp?.prestashop?.tax_rules?.tax_rule;
               if (rules) {
                 const ruleList = Array.isArray(rules) ? rules : [rules];
                 for (const rule of ruleList) {
-                  const taxResp = await getXml(`/taxes/${rule.id_tax}?display=full`);
+                  const taxId = extractText(rule.id_tax);
+                  if (!taxId) continue;
+                  const taxResp = await getXml(`/taxes/${taxId}?display=full`);
                   const taxInfo = taxResp?.prestashop?.tax;
-                  if (taxInfo && parseFloat(taxInfo.rate) === taxRate) {
-                    taxRulesGroupId = group.id;
+                  const apiRate = taxInfo ? parseFloat(extractText(taxInfo.rate)) : NaN;
+                  if (Number.isFinite(apiRate) && Math.abs(apiRate - taxRate) < 0.001) {
+                    taxRulesGroupId = groupId;
                     break;
                   }
                 }
               }
               if (taxRulesGroupId !== '0') break;
+            }
+          }
+          if (taxRulesGroupId === '0') {
+            logCallback('warn', `Aucun groupe de taxe trouve pour le taux ${taxRate}%. Produit ${row.reference}. Creation automatique...`);
+            try {
+              taxRulesGroupId = await createTaxAndGroup(taxRate, logCallback);
+            } catch (createError) {
+              console.error(`Echec creation groupe taxe ${taxRate}%:`, createError);
+              logCallback('error', `Echec creation groupe taxe ${taxRate}%: ${formatApiError(createError)}`);
+              taxRulesGroupId = '0';
             }
           }
           taxCache[taxRate] = taxRulesGroupId;
@@ -201,7 +282,8 @@ export const processProductImport = async (data, logCallback) => {
             }
             categoryCache[catName] = categoryId;
           } catch (catError) {
-            logCallback('error', `Erreur avec la catégorie "${catName}".`);
+            console.error(`Erreur avec la catégorie "${catName}":`, catError);
+            logCallback('error', `Erreur avec la catégorie "${catName}" : ${formatApiError(catError)}`);
             throw catError;
           }
         }
@@ -220,7 +302,6 @@ export const processProductImport = async (data, logCallback) => {
             wholesale_price: finalWholesalePrice.toFixed(6),
             id_tax_rules_group: taxRulesGroupId,
             id_category_default: categoryId,
-            ...(formattedDate ? { available_date: formattedDate } : {}),
             name: {
               language: {
                 '@_id': '1',
@@ -248,32 +329,6 @@ export const processProductImport = async (data, logCallback) => {
       const productId = newProductResp?.prestashop?.product?.id;
 
       // ========================================================================
-      // CRÉATION DU STOCK INITIAL POUR LE PRODUIT
-      // ========================================================================
-      if (productId) {
-        try {
-          const stockPayload = {
-            prestashop: {
-              stock_available: {
-                id_product: productId,
-                id_product_attribute: 0,
-                id_shop: 1,
-                id_shop_group: 0,
-                quantity: 0,
-                depends_on_stock: 0,
-                out_of_stock: 2
-              }
-            }
-          };
-
-          await postXml('/stock_availables', stockPayload);
-          logCallback('info', `Stock initial créé pour le produit ${productId} (quantité 0).`);
-        } catch (stockError) {
-          logCallback('warn', `Impossible de créer le stock initial pour le produit ${productId}: ${stockError.message}`);
-        }
-      }
-
-      // ========================================================================
       // FORÇAGE DE LA DATE DE DISPONIBILITÉ
       // ========================================================================
       if (productId && formattedDate) {
@@ -296,17 +351,25 @@ export const processProductImport = async (data, logCallback) => {
             logCallback('success', `Date de disponibilité mise à jour avec succès !`);
           }
         } catch (dateError) {
-          logCallback('error', `Échec du PUT pour la date : ${dateError.message}`);
+          console.error(`Échec du PUT pour la date du produit ${productId}:`, dateError);
+          logCallback('error', `Échec du PUT pour la date : ${formatApiError(dateError)}`);
         }
       }
 
       logCallback('success', `Ligne ${index + 1} (${row.nom}) importée avec succès.`);
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     logCallback('success', 'Import des produits terminé avec succès !');
   } catch (error) {
-    logCallback('error', `Erreur lors de l'import : ${error.message}`);
+    console.error('Erreur lors de l\'import des produits:', error);
+    logCallback('error', `Erreur lors de l'import : ${formatApiError(error)}`);
     logCallback('error', 'Annulation de l\'opération et lancement de la réinitialisation (Rollback)...');
-    await rollbackProducts(logCallback);
+    try {
+      await rollbackProducts(logCallback);
+    } catch (rollbackErr) {
+      console.error('Échec du rollback des produits:', rollbackErr);
+      logCallback('error', `Échec du rollback : ${formatApiError(rollbackErr)}`);
+    }
   }
 };

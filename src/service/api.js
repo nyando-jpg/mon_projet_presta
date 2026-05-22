@@ -63,6 +63,7 @@ function parseResponseData(data) {
   return isXmlString(data) ? parseXmlSafe(data) : data;
 }
 
+
 function readNodeValue(node) {
   if (node == null) return '';
   if (typeof node === 'object') {
@@ -243,4 +244,85 @@ export async function getPrestaShopConfig(name) {
   const response = await getXml(`/configurations?display=full&filter[name]=[${name}]`);
   const config = response?.prestashop?.configurations?.configuration;
   return Array.isArray(config) ? config[0] : config;
+}
+
+export function formatApiError(error) {
+  if (!error) return 'Erreur inconnue';
+
+  let msg = error.message || String(error);
+
+  // Extraire les infos de la requête Axios
+  if (error.config) {
+    const method = error.config.method ? error.config.method.toUpperCase() : '';
+    let url = error.config.url || '';
+    // Sécurité : masquer la clé API ws_key
+    url = url.replace(/ws_key=[^&]*/gi, 'ws_key=***');
+    msg += ` [API ${method} ${url}]`;
+
+    if (error.config.params && Object.keys(error.config.params).length > 0) {
+      const safeParams = { ...error.config.params };
+      if (safeParams.ws_key) {
+        safeParams.ws_key = '***';
+      }
+      msg += ` params: ${JSON.stringify(safeParams)}`;
+    }
+
+    if (error.config.data) {
+      const payloadStr = typeof error.config.data === 'object' ? JSON.stringify(error.config.data) : String(error.config.data);
+      const cleanPayload = payloadStr.replace(/\s+/g, ' ').trim();
+      msg += ` | Payload : ${cleanPayload.substring(0, 300)}${cleanPayload.length > 300 ? '...' : ''}`;
+    }
+  }
+
+  // Détails de la réponse de l'API
+  if (error.response) {
+    msg += ` | Statut : ${error.response.status}`;
+    if (error.response.data) {
+      const data = error.response.data;
+      const dataStr = typeof data === 'object' ? JSON.stringify(data) : String(data);
+
+      // XML PrestaShop
+      if (dataStr.includes('<error>') || dataStr.includes('<message>')) {
+        const matches = [...dataStr.matchAll(/<message[^>]*><!\[CDATA\[([\s\S]*?)\]\]><\/message>/gi)];
+        if (matches.length > 0) {
+          const apiMsgs = matches.map(m => m[1].trim()).join(', ');
+          msg += ` | Détail API : ${apiMsgs}`;
+        } else {
+          const matchesNoCdata = [...dataStr.matchAll(/<message[^>]*>([\s\S]*?)<\/message>/gi)];
+          if (matchesNoCdata.length > 0) {
+            const apiMsgs = matchesNoCdata.map(m => m[1].trim()).join(', ');
+            msg += ` | Détail API : ${apiMsgs}`;
+          } else {
+            msg += ` | XML : ${dataStr.replace(/\s+/g, ' ').substring(0, 300)}`;
+          }
+        }
+      }
+      // HTML (erreurs Apache/PHP)
+      else if (dataStr.includes('<!DOCTYPE') || dataStr.includes('<html')) {
+        const titleMatch = dataStr.match(/<title>([\s\S]*?)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].trim() : '';
+
+        let phpError = '';
+        if (dataStr.includes('Fatal error') || dataStr.includes('Parse error') || dataStr.includes('Warning:')) {
+          const bodyText = dataStr.replace(/<[^>]*>/g, ' ');
+          const phpMatch = bodyText.match(/(?:Fatal error|Parse error|Warning|Notice):[^.]*/i);
+          if (phpMatch) {
+            phpError = phpMatch[0].trim().replace(/\s+/g, ' ');
+          }
+        }
+
+        if (title || phpError) {
+          msg += ` | Page HTML (${title || 'Sans titre'}) ${phpError ? `| PHP : ${phpError}` : ''}`;
+        } else {
+          const stripped = dataStr.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          msg += ` | HTML : ${stripped.substring(0, 200)}...`;
+        }
+      }
+      else {
+        msg += ` | Détail : ${dataStr.replace(/\s+/g, ' ').substring(0, 300)}`;
+      }
+    }
+  }
+
+  return msg;
 }
