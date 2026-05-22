@@ -69,11 +69,6 @@ export async function fetchIdsForTarget(target) {
 }
 
 export async function resetTarget(target, logCallback = () => {}) {
-  if (target.deletable === false) {
-    logCallback('info', `${target.label}: suppression non supportee par l'API, etape ignoree.`);
-    return;
-  }
-
   const ids = await fetchIdsForTarget(target);
 
   if (!ids.length) {

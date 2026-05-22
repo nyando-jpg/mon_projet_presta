@@ -1,396 +1,406 @@
-import { getXml, postXml, putXml, deleteXml } from './api';
+import { getXml, postXml, putXml, deleteXml, getPrestaShopConfig, formatApiError } from './api';
 import { runResetForTargets } from './resetService';
+import { resetTargets } from './resetTargets';
+import { getProductTaxRate } from './price';
 
-// ============================================================================
-// CONFIGURATION DU ROLLBACK
-// ============================================================================
 export const resetOrderTargets = [
-    {
-        key: 'orders',
-        label: 'Commandes',
-        endpoint: '/orders',
-        collectionKey: 'orders',
-        itemKey: 'order',
-        skipIds: []
-    },
-    {
-        key: 'carts',
-        label: 'Paniers',
-        endpoint: '/carts',
-        collectionKey: 'carts',
-        itemKey: 'cart',
-        skipIds: []
-    }
+    { key: 'orders', label: 'Commandes', endpoint: '/orders', collectionKey: 'orders', itemKey: 'order', skipIds: [] },
+    { key: 'addresses', label: 'Adresses Clients', endpoint: '/addresses', collectionKey: 'addresses', itemKey: 'address', skipIds: [] },
+    { key: 'customers', label: 'Clients', endpoint: '/customers', collectionKey: 'customers', itemKey: 'customer', skipIds: [] }
 ];
 
 export const rollbackOrders = async (logCallback) => {
-    logCallback('info', 'Lancement de la réinitialisation des commandes et paniers...');
+    logCallback('info', 'Lancement de la réinitialisation des commandes...');
     await runResetForTargets(resetOrderTargets, (type, message) => {
-        logCallback(type, `Rollback Commande: ${message}`);
+        logCallback(type, `Rollback: ${message}`);
     });
-    logCallback('info', 'Réinitialisation des commandes terminée.');
+    logCallback('info', 'Réinitialisation terminée.');
 };
 
-// ============================================================================
-// FONCTIONS UTILITAIRES
-// ============================================================================
+function cleanQuotes(str) {
+    return str.replace(/[\u2018\u2019\u201A\u201B\u2032\u2039\u0027']/g, "'").replace(/[\u201C\u201D\u201E\u2033\u203A\u0022"]/g, '"').replace(/\u00A0/g, ' ').trim();
+}
+
 function parseAchat(achatString) {
-    if (!achatString || achatString.indexOf('[') === -1 || achatString.indexOf(']') === -1) {
-        return [];
-    }
-
-    const start = achatString.indexOf('[');
-    const end = achatString.lastIndexOf(']');
-    const content = achatString.slice(start + 1, end);
-
-    const tuples = content.match(/\(.*?\)/g);
-    if (!tuples) return [];
-
+    if (!achatString) return [];
+    const cleanStr = cleanQuotes(achatString);
+    if (!cleanStr.includes('[')) return [];
+    const content = cleanStr.substring(cleanStr.indexOf('[') + 1, cleanStr.lastIndexOf(']')).trim();
+    if (!content) return [];
     const items = [];
-    for (let i = 0; i < tuples.length; i++) {
-        const tuple = tuples[i];
-        const cleanTuple = tuple.slice(1, -1);
-        const parts = cleanTuple.split(';');
-
-        const ref = parts[0] ? parts[0].replace(/["']/g, '').trim() : '';
-        const qty = parts[1] ? parseInt(parts[1].trim(), 10) || 1 : 1;
-        const variant = parts[2] ? parts[2].replace(/["']/g, '').trim() : '';
-
-        if (ref) {
-            items.push({ reference: ref, quantity: qty, variant: variant });
-        }
+    let currentItem = '';
+    let inTuple = false;
+    for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+        if (char === '(') { inTuple = true; currentItem = ''; }
+        else if (char === ')') { inTuple = false; items.push(currentItem); }
+        else if (inTuple) currentItem += char;
     }
-    return items;
+    return items.map(item => {
+        const parts = item.split(';').map(p => cleanQuotes(p).replace(/^"|"$/g, '').trim());
+        return { reference: parts[0] || '', quantite: parseInt(parts[1], 10) || 1, variante: parts[2] || '' };
+    });
+}
+
+function generateOrderReference() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let result = '';
+    for (let i = 0; i < 9; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+    return result;
+}
+
+function resolveOrderStateId(etatRaw) {
+    const value = String(etatRaw || '').toLowerCase();
+    if (value.includes('livr')) return 5;
+    if (value.includes('annul') || value.includes('cancel')) return 6;
+    if (value.includes('accept') || value.includes('pay') || value.includes('paiement')) return 2;
+    return 6;
 }
 
 function extractId(node) {
-    if (!node) return null;
-    if (typeof node === 'object') {
-        return String(node['#text'] || node['@_id'] || node.id || '');
-    }
+    if (node === undefined || node === null) return '';
+    if (typeof node === 'object') return String(node['#text'] || node['@_id'] || node.id || '');
     return String(node);
 }
 
+function getLangText(field) {
+    if (!field || !field.language) return '';
+    if (Array.isArray(field.language)) return field.language[0]['#text'];
+    return field.language['#text'];
+}
+
 // ============================================================================
-// FONCTION PRINCIPALE : IMPORTATION
+// TRACER LE MOUVEMENT SANS TOUCHER AU STOCK PHYSIQUE
 // ============================================================================
-export const processOrderImport = async (data, logCallback) => {
-
-    if (data && data.length > 0) {
-        data = data.map(row => {
-            const newRow = {};
-            for (const key in row) {
-                newRow[key.trim().toLowerCase()] = row[key];
-            }
-            return newRow;
-        });
-    } else {
-        logCallback('warn', 'Le fichier CSV des commandes est vide.');
-        return;
-    }
-
-    const expectedColumns = ['date', 'nom', 'email', 'pwd', 'adresse', 'achat', 'etat'];
-    const actualColumns = Object.keys(data[0]);
-    const missingColumns = expectedColumns.filter(col => !actualColumns.includes(col));
-
-    if (missingColumns.length > 0) {
-        logCallback('error', `CRITIQUE : Colonnes manquantes dans le CSV : ${missingColumns.join(', ')}`);
-        logCallback('error', 'Annulation immédiate de l\'importation des commandes.');
-        return;
-    }
-
+async function logOrderMovement(pId, attributeId, quantity, orderId, employeeId, logCallback, customDate = '') {
     try {
-        const statesResp = await getXml('/order_states?display=full');
-        const allStates = statesResp?.prestashop?.order_states?.order_state || [];
-        const stateList = Array.isArray(allStates) ? allStates : [allStates];
-        logCallback('info', `${stateList.length} états de commande chargés pour mapping.`);
+        const dateAdd = customDate ? `${customDate} 12:00:00` : new Date().toISOString().slice(0, 19).replace('T', ' ');
+        const attrFilter = attributeId ? attributeId : 0;
+        if (logCallback) logCallback('debug', `logOrderMovement called: order=${orderId} product=${pId} attr=${attrFilter} qty=${quantity} employee=${employeeId}`);
 
-        let activeCountryId = '1';
-        try {
-            const countrySearch = await getXml('/countries?filter[active]=[1]&display=[id]');
-            const countries = countrySearch?.prestashop?.countries?.country;
-            if (countries) {
-                activeCountryId = extractId(Array.isArray(countries) ? countries[0].id : countries.id);
-                logCallback('info', `Pays actif dynamique trouvé (ID: ${activeCountryId}).`);
-            } else {
-                logCallback('warn', 'Aucun pays actif trouvé, utilisation de l\'ID 1 par défaut.');
-            }
-        } catch (e) {
-            logCallback('warn', 'Erreur lors de la recherche d\'un pays actif. Utilisation de l\'ID 1.');
+        // 1. Récupérer l'ID du stock_available correspondant pour pouvoir faire un mapping robuste
+        const stockList = await getXml(`/stock_availables?filter[id_product]=[${pId}]&filter[id_product_attribute]=[${attrFilter}]&display=full`);
+        const stockItems = stockList?.prestashop?.stock_availables?.stock_available;
+        const stocks = Array.isArray(stockItems) ? stockItems : (stockItems ? [stockItems] : []);
+
+        if (!stocks.length) {
+            if (logCallback) logCallback('warn', `⚠️ Mouvement non tracé (stock introuvable) pour produit ${pId}.`);
+            return;
         }
 
+        const stockToUse = stocks.find(s => String(s.id_shop_group?.['#text'] ?? s.id_shop_group) === '0') || stocks[0];
+        const stockAvailableId = String(stockToUse.id?.['#text'] ?? stockToUse.id ?? '0');
+        if (logCallback) logCallback('debug', `Using stock_available id ${stockAvailableId} for product ${pId}`);
+
+        if (!stockAvailableId || stockAvailableId === '0') {
+            if (logCallback) logCallback('warn', `⚠️ Mouvement non tracé (stock_available invalide) pour produit ${pId}.`);
+            return;
+        }
+
+        // 2. Eviter les doublons : vérifier si un mouvement identique existe déjà
+        try {
+            if (logCallback) logCallback('debug', `Checking existing stock_movements for order ${orderId}, product ${pId}, attr ${attrFilter}`);
+            const existingList = await getXml(`/stock_movements?filter[id_order]=[${orderId}]&display=full`);
+            const existingItems = existingList?.prestashop?.stock_movements?.stock_mvt || existingList?.prestashop?.stock_mvts?.stock_mvt || existingList?.prestashop?.stock_mvt;
+            const existingArray = Array.isArray(existingItems) ? existingItems : (existingItems ? [existingItems] : []);
+            if (logCallback) logCallback('debug', `Found ${existingArray.length} existing stock movement(s) for order ${orderId} product ${pId}`);
+
+            const duplicate = existingArray.find(m => {
+                const mStockId = String(m.id_stock?.['#text'] ?? m.id_stock ?? '');
+                const mOrderId = String(m.id_order?.['#text'] ?? m.id_order ?? '');
+                const mSupplyOrderId = String(m.id_supply_order?.['#text'] ?? m.id_supply_order ?? '0');
+
+                const matchesStock = mStockId === String(stockAvailableId);
+                const matchesLegacy = (mStockId === '0' || mStockId === '') && mOrderId === String(pId) && mSupplyOrderId === String(attrFilter);
+
+                const sign = String(m.sign?.['#text'] ?? m.sign ?? '');
+                const qty = Number(m.physical_quantity?.['#text'] ?? m.physical_quantity ?? 0);
+
+                return (matchesStock || matchesLegacy) && sign === '-1' && qty === Number(quantity);
+            });
+
+            if (duplicate) {
+                const dupDate = String(duplicate.date_add?.['#text'] ?? duplicate.date_add ?? '').substring(0, 10);
+                const targetDateOnly = customDate || new Date().toISOString().slice(0, 10);
+                if (dupDate !== targetDateOnly) {
+                    if (logCallback) logCallback('info', `🔄 Remplacement du mouvement automatique (date: ${dupDate}) par le mouvement historique (date: ${targetDateOnly}).`);
+                    const dupId = extractId(duplicate.id);
+                    await deleteXml(`/stock_movements/${dupId}`);
+                } else {
+                    if (logCallback) logCallback('info', `⤴️ Mouvement existant détecté pour commande ${orderId}, produit ${pId} (var:${attrFilter}) — saut.`);
+                    return;
+                }
+            }
+        } catch (e) {
+            console.error('Impossible de lire les mouvements existants:', e);
+            if (logCallback) logCallback('warn', `Impossible de lire les mouvements existants pour vérification: ${formatApiError(e)}`);
+            // en cas d'erreur sur la lecture des mouvements, continuer et tenter d'en créer un nouveau
+        }
+
+        const reasonConfig = await getPrestaShopConfig('PS_STOCK_CUSTOMER_ORDER_REASON');
+        const reasonId = reasonConfig?.value ?? 3;
+
+        const baseXml = `
+            <id_order><![CDATA[${orderId}]]></id_order>
+            <id_product><![CDATA[${pId}]]></id_product>
+            <id_product_attribute><![CDATA[${attrFilter}]]></id_product_attribute>
+            <id_employee><![CDATA[${employeeId}]]></id_employee>
+            <id_stock><![CDATA[${stockAvailableId}]]></id_stock>
+            <id_stock_mvt_reason><![CDATA[${reasonId}]]></id_stock_mvt_reason>
+            <physical_quantity><![CDATA[${quantity}]]></physical_quantity>
+            <sign><![CDATA[-1]]></sign>
+            <price_te><![CDATA[0.000000]]></price_te>
+            <date_add><![CDATA[${dateAdd}]]></date_add>
+        `;
+        const resp = await postXml('/stock_movements', `<?xml version="1.0" encoding="UTF-8"?>\n<prestashop><stock_mvt>${baseXml}</stock_mvt></prestashop>`);
+        const createdId = extractId(resp?.prestashop?.stock_mvt?.id);
+
+        if (createdId && customDate) {
+            if (logCallback) logCallback('debug', `Updating date_add for stock movement ${createdId} to ${dateAdd}`);
+            const putPayload = `<?xml version="1.0" encoding="UTF-8"?>
+            <prestashop>
+                <stock_mvt>
+                    <id>${createdId}</id>
+                    <id_employee><![CDATA[${employeeId}]]></id_employee>
+                    <id_stock><![CDATA[${stockAvailableId}]]></id_stock>
+                    <physical_quantity><![CDATA[${quantity}]]></physical_quantity>
+                    <id_stock_mvt_reason><![CDATA[${reasonId}]]></id_stock_mvt_reason>
+                    <sign><![CDATA[-1]]></sign>
+                    <price_te><![CDATA[0.000000]]></price_te>
+                    <date_add><![CDATA[${dateAdd}]]></date_add>
+                </stock_mvt>
+            </prestashop>`;
+            await putXml(`/stock_movements/${createdId}`, putPayload);
+        }
+
+        if (logCallback) logCallback('success', `📦 Mouvement tracé dans l'historique pour le produit ${pId} (-${quantity}). id:${createdId || 'unknown'}`);
+    } catch (e) {
+        console.error('Impossible de tracer le mouvement:', e);
+        if (logCallback) logCallback('warn', `⚠️ Impossible de tracer le mouvement : ${formatApiError(e)}`);
+    }
+}
+
+async function forceOrderState(orderId, stateId, logCallback, options = {}) {
+    const stateIdValue = String(stateId);
+    const useCustomEndpoint = stateIdValue === '5' || stateIdValue === '6';
+    const { employeeId = 0, date = '' } = options;
+
+    const payload = useCustomEndpoint
+        ? `<?xml version="1.0" encoding="UTF-8"?>
+    <prestashop>
+        <manual_order_state>
+            <id_order><![CDATA[${orderId}]]></id_order>
+            <id_order_state><![CDATA[${stateId}]]></id_order_state>
+            <id_employee><![CDATA[${employeeId}]]></id_employee>
+            <date><![CDATA[${date}]]></date>
+        </manual_order_state>
+    </prestashop>`
+        : `<?xml version="1.0" encoding="UTF-8"?>
+    <prestashop>
+        <order_history>
+            <id_order><![CDATA[${orderId}]]></id_order>
+            <id_order_state><![CDATA[${stateId}]]></id_order_state>
+            ${date ? `<date_add><![CDATA[${date} 12:00:00]]></date_add>` : ''}
+        </order_history>
+    </prestashop>`;
+
+    try {
+        await postXml(useCustomEndpoint ? '/custom_order_state' : '/order_histories', payload);
+        if (logCallback) logCallback('info', `✅ État de la commande #${orderId} forcé au statut ${stateId}.`);
+    } catch (error) {
+        console.error("Impossible de forcer l'état de la commande:", error);
+        if (logCallback) logCallback('warn', `⚠️ Impossible de forcer l'état de la commande : ${formatApiError(error)}`);
+    }
+}
+
+export const processOrderImport = async (data, logCallback) => {
+    if (!data || data.length === 0) { logCallback('warn', 'CSV vide.'); return; }
+    data = data.map(row => { const newRow = {}; for (const key in row) newRow[key.trim().toLowerCase()] = row[key]; return newRow; });
+    const employeeId = 1;
+
+    try {
         for (const [index, row] of data.entries()) {
-            logCallback('info', `Traitement de la ligne ${index + 1} (Client : ${row.nom || 'Inconnu'})...`);
+            const nom = row.nom ? String(row.nom).trim() : 'Client';
+            const email = row.email ? String(row.email).trim() : '';
+            const password = row.pwd ? String(row.pwd).trim() : '123456789';
+            const adresseRaw = row.adresse ? String(row.adresse).trim() : 'Antananarivo';
+            const dateRaw = row.date ? String(row.date).trim() : '';
+            const etatRaw = row.etat ? String(row.etat).trim().toLowerCase() : '';
+            const achats = parseAchat(row.achat);
 
-            if (!row.email || String(row.email).trim() === '' ||
-                !row.nom || String(row.nom).trim() === '' ||
-                !row.adresse || String(row.adresse).trim() === '' ||
-                !row.achat || String(row.achat).trim() === '' ||
-                !row.date || String(row.date).trim() === '') {
-                logCallback('error', `Ligne ${index + 1} ignorée : Des données vitales sont manquantes.`);
-                continue;
-            }
-
-            const email = String(row.email).trim();
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                logCallback('error', `Ligne ${index + 1} ignorée : L'adresse email fournie (${email}) n'est pas valide.`);
-                continue;
-            }
-
-            const rawDate = String(row.date).trim();
-            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
-            if (!dateRegex.test(rawDate)) {
-                logCallback('error', `Ligne ${index + 1} ignorée : Format de date "${rawDate}" invalide. Attendu : DD/MM/YYYY.`);
-                continue;
-            }
-
-            const dateParts = rawDate.split('/');
-            const formattedDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
-
-            const purchasedItems = parseAchat(row.achat);
-            if (purchasedItems.length === 0) {
-                logCallback('error', `Ligne ${index + 1} ignorée : Impossible de décoder la syntaxe de la colonne achat.`);
-                continue;
-            }
+            if (!email) continue;
+            logCallback('info', `--- Ligne ${index + 1} (Client : ${nom}) ---`);
 
             let customerId = null;
             const customerSearch = await getXml(`/customers?filter[email]=[${email}]&display=[id]`);
-            let customer = customerSearch?.prestashop?.customers?.customer;
+            let existingCustomer = customerSearch?.prestashop?.customers?.customer;
 
-            if (customer) {
-                if (Array.isArray(customer)) customer = customer[0];
-                customerId = extractId(customer.id);
+            if (existingCustomer) {
+                customerId = extractId(Array.isArray(existingCustomer) ? existingCustomer[0].id : existingCustomer.id);
             } else {
-                logCallback('info', `Création du client ${row.nom} (${email})...`);
-                const customerPayload = {
-                    prestashop: {
-                        customer: {
-                            firstname: row.nom,
-                            lastname: row.nom,
-                            email: email,
-                            passwd: row.pwd || 'DefaultPassword123!',
-                            active: 1
-                        }
-                    }
-                };
-                const newCustomer = await postXml('/customers', customerPayload);
-                customerId = extractId(newCustomer?.prestashop?.customer?.id);
+                const customerPayload = `<?xml version="1.0" encoding="UTF-8"?>
+                <prestashop><customer>
+                    <lastname><![CDATA[${nom}]]></lastname><firstname><![CDATA[Client]]></firstname>
+                    <email><![CDATA[${email}]]></email><passwd><![CDATA[${password}]]></passwd>
+                    <id_default_group><![CDATA[3]]></id_default_group><active><![CDATA[1]]></active>
+                    <associations><groups><group><id><![CDATA[3]]></id></group></groups></associations>
+                </customer></prestashop>`;
+                const newCustomerResp = await postXml('/customers', customerPayload);
+                customerId = extractId(newCustomerResp?.prestashop?.customer?.id);
             }
 
             let addressId = null;
-            const addressSearch = await getXml(`/addresses?filter[id_customer]=[${customerId}]&filter[address1]=[${row.adresse.trim()}]&display=[id]`);
-            let address = addressSearch?.prestashop?.addresses?.address;
+            const addressSearch = await getXml(`/addresses?filter[id_customer]=[${customerId}]&display=[id]`);
+            let existingAddress = addressSearch?.prestashop?.addresses?.address;
 
-            if (address) {
-                if (Array.isArray(address)) address = address[0];
-                addressId = extractId(address.id);
+            if (existingAddress) {
+                addressId = extractId(Array.isArray(existingAddress) ? existingAddress[0].id : existingAddress.id);
             } else {
-                const addressPayload = {
-                    prestashop: {
-                        address: {
-                            id_customer: customerId,
-                            alias: 'Importé',
-                            lastname: row.nom,
-                            firstname: row.nom,
-                            address1: row.adresse.trim(),
-                            postcode: '101',
-                            city: 'Antananarivo',
-                            id_country: activeCountryId,
-                            phone: '0340000000'
-                        }
-                    }
-                };
-                const newAddress = await postXml('/addresses', addressPayload);
-                addressId = extractId(newAddress?.prestashop?.address?.id);
+                const addressPayload = `<?xml version="1.0" encoding="UTF-8"?>
+                <prestashop><address>
+                    <id_customer><![CDATA[${customerId}]]></id_customer><id_country><![CDATA[8]]></id_country>
+                    <alias><![CDATA[Mon Adresse]]></alias><lastname><![CDATA[${nom}]]></lastname><firstname><![CDATA[Client]]></firstname>
+                    <address1><![CDATA[${adresseRaw}]]></address1><city><![CDATA[Antananarivo]]></city><phone><![CDATA[0340000000]]></phone>
+                </address></prestashop>`;
+                const newAddressResp = await postXml('/addresses', addressPayload);
+                addressId = extractId(newAddressResp?.prestashop?.address?.id);
             }
 
             let cartRowsXml = '';
-            let productCheckFailed = false;
-            let cartTotal = 0;
+            let orderRowsXml = '';
+            let cartTotalHt = 0;
+            let cartTotalTtc = 0;
+            const linesToDecrement = [];
 
-            for (let i = 0; i < purchasedItems.length; i++) {
-                const item = purchasedItems[i];
-
-                const prodSearch = await getXml(`/products?filter[reference]=[${item.reference}]&display=[id,price]`);
-                let foundProd = prodSearch?.prestashop?.products?.product;
-
-                if (!foundProd) {
-                    logCallback('error', `Ligne ${index + 1} stoppée : La référence "${item.reference}" n'existe pas en boutique.`);
-                    productCheckFailed = true;
-                    break;
+            const mergedAchats = [];
+            for (const achat of achats) {
+                const existing = mergedAchats.find(a => a.reference === achat.reference && a.variante === achat.variante);
+                if (existing) {
+                    existing.quantite += achat.quantite;
+                } else {
+                    mergedAchats.push({ ...achat });
                 }
+            }
 
-                if (Array.isArray(foundProd)) foundProd = foundProd[0];
-                const idProduct = extractId(foundProd.id);
+            for (const achat of mergedAchats) {
+                const prodSearch = await getXml(`/products?filter[reference]=[${achat.reference}]&display=[id,price,name]`);
+                let prod = prodSearch?.prestashop?.products?.product;
+                if (!prod) continue;
+                if (Array.isArray(prod)) prod = prod[0];
 
-                const itemPrice = parseFloat(foundProd.price || 0);
-                cartTotal += (itemPrice * item.quantity);
+                const pId = extractId(prod.id);
+                let basePriceHt = parseFloat(prod.price) || 0;
+                let prodName = getLangText(prod.name) || 'Produit';
+                let attributeId = 0;
 
-                let idProductAttribute = '0';
-
-                if (item.variant && item.variant !== '') {
-                    const exactCombinationRef = `${item.reference}_${item.variant}`;
-                    const combSearch = await getXml(`/combinations?filter[id_product]=[${idProduct}]&filter[reference]=[${exactCombinationRef}]&display=[id]`);
-                    let foundComb = combSearch?.prestashop?.combinations?.combination;
-                    if (foundComb) {
-                        if (Array.isArray(foundComb)) foundComb = foundComb[0];
-                        idProductAttribute = extractId(foundComb.id);
-                    } else {
-                        logCallback('warn', `Avertissement: La variante ${exactCombinationRef} est introuvable.`);
+                if (achat.variante) {
+                    const combSearch = await getXml(`/combinations?filter[id_product]=[${pId}]&filter[reference]=[${achat.reference}_${achat.variante}]&display=[id,price]`);
+                    let comb = combSearch?.prestashop?.combinations?.combination;
+                    if (comb) {
+                        attributeId = extractId(Array.isArray(comb) ? comb[0].id : comb.id);
+                        basePriceHt += parseFloat(Array.isArray(comb) ? comb[0].price : comb.price) || 0;
+                        prodName += ` - ${achat.variante}`;
                     }
                 }
 
-                cartRowsXml += `
-                <cart_row>
-                    <id_product>${idProduct}</id_product>
-                    <id_product_attribute>${idProductAttribute}</id_product_attribute>
-                    <id_address_delivery>${addressId}</id_address_delivery>
-                    <id_customization>0</id_customization>
-                    <quantity>${item.quantity}</quantity>
-                </cart_row>`;
+                const taxRate = await getProductTaxRate(pId);
+                const basePriceTtc = basePriceHt * (1 + taxRate / 100);
+
+                const lineTotalHt = basePriceHt * achat.quantite;
+                const lineTotalTtc = basePriceTtc * achat.quantite;
+
+                cartTotalHt += lineTotalHt;
+                cartTotalTtc += lineTotalTtc;
+
+                linesToDecrement.push({ pId, attributeId, quantity: achat.quantite });
+
+                cartRowsXml += `<cart_row><id_product><![CDATA[${pId}]]></id_product><id_product_attribute><![CDATA[${attributeId}]]></id_product_attribute><id_address_delivery><![CDATA[${addressId}]]></id_address_delivery><quantity><![CDATA[${achat.quantite}]]></quantity></cart_row>`;
+                orderRowsXml += `<order_row><product_id><![CDATA[${pId}]]></product_id><product_attribute_id><![CDATA[${attributeId}]]></product_attribute_id><product_quantity><![CDATA[${achat.quantite}]]></product_quantity><product_name><![CDATA[${prodName}]]></product_name><product_reference><![CDATA[${achat.reference}]]></product_reference><product_price><![CDATA[${basePriceHt.toFixed(6)}]]></product_price><unit_price_tax_incl><![CDATA[${basePriceTtc.toFixed(6)}]]></unit_price_tax_incl><unit_price_tax_excl><![CDATA[${basePriceHt.toFixed(6)}]]></unit_price_tax_excl></order_row>`;
             }
 
-            if (productCheckFailed) continue;
+            let formattedDate = null;
+            if (dateRaw && dateRaw.trim() !== '') {
+                const trimmedDate = dateRaw.trim();
+                const dateRegexDmy = /^\d{2}\/\d{2}\/\d{4}$/;
 
-            const cartXmlPayload = `<?xml version="1.0" encoding="UTF-8"?>
-<prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
-    <cart>
-        <id_address_delivery>${addressId}</id_address_delivery>
-        <id_address_invoice>${addressId}</id_address_invoice>
-        <id_currency>1</id_currency>
-        <id_customer>${customerId}</id_customer>
-        <id_lang>1</id_lang>
-        <id_shop_group>1</id_shop_group>
-        <id_shop>1</id_shop>
-        <id_carrier>1</id_carrier>
-        <associations>
-            <cart_rows nodeType="cart_row" virtualEntity="true">
-${cartRowsXml}
-            </cart_rows>
-        </associations>
-    </cart>
-</prestashop>`;
+                if (!dateRegexDmy.test(trimmedDate)) {
+                    throw new Error(`La date ("${dateRaw}") ne respecte pas le format strict DD/MM/YYYY.`);
+                }
 
-            const newCartResp = await postXml('/carts', cartXmlPayload);
+                const parts = trimmedDate.split('/');
+                formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            } else {
+                formattedDate = new Date().toISOString().slice(0, 10);
+            }
+
+            if (!cartRowsXml) { logCallback('warn', `Panier vide pour la ligne ${index + 1}, ignorée.`); continue; }
+
+            const cartPayload = `<?xml version="1.0" encoding="UTF-8"?><prestashop><cart><id_customer><![CDATA[${customerId}]]></id_customer><id_address_delivery><![CDATA[${addressId}]]></id_address_delivery><id_address_invoice><![CDATA[${addressId}]]></id_address_invoice><id_currency><![CDATA[1]]></id_currency><id_lang><![CDATA[1]]></id_lang><associations><cart_rows>${cartRowsXml}</cart_rows></associations></cart></prestashop>`;
+            const newCartResp = await postXml('/carts', cartPayload);
             const cartId = extractId(newCartResp?.prestashop?.cart?.id);
 
             if (!cartId) {
-                logCallback('error', `Échec critique de la création du panier à la ligne ${index + 1}.`);
+                if (logCallback) logCallback('error', `Erreur critique: Impossible de récupérer l'ID du panier pour la ligne ${index + 1}.`);
                 continue;
             }
 
-            const etatBrut = row.etat ? String(row.etat).trim().toLowerCase() : '';
+            if (!etatRaw || etatRaw === '') { logCallback('warn', `Ligne ${index + 1} : Panier Abandonné #${cartId} conservé.`); continue; }
 
-            if (etatBrut === '' || etatBrut === 'null') {
-                logCallback('info', `État vide détecté. Sauvegarde du Panier Abandonné #${cartId}...`);
-                const updateCartDatePayload = `<?xml version="1.0" encoding="UTF-8"?>
-<prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
-    <cart>
-        <id>${cartId}</id>
-        <id_address_delivery>${addressId}</id_address_delivery>
-        <id_address_invoice>${addressId}</id_address_invoice>
-        <id_currency>1</id_currency>
-        <id_customer>${customerId}</id_customer>
-        <id_lang>1</id_lang>
-        <id_shop_group>1</id_shop_group>
-        <id_shop>1</id_shop>
-        <id_carrier>1</id_carrier>
-        <date_add>${formattedDate} 12:00:00</date_add>
-        <date_upd>${formattedDate} 12:00:00</date_upd>
-    </cart>
-</prestashop>`;
-
-                await putXml(`/carts/${cartId}`, updateCartDatePayload);
-                logCallback('success', `Ligne ${index + 1} importée : Panier #${cartId} conservé (Aucune commande créée).`);
-                continue;
+            const orderStateId = resolveOrderStateId(etatRaw);
+            if (logCallback) {
+                logCallback('info', `État import: "${etatRaw}" -> ${orderStateId}`);
             }
+            const orderRef = generateOrderReference();
 
-            let orderStateId = '2';
+            const orderPayload = `<?xml version="1.0" encoding="UTF-8"?><prestashop><order><id_address_delivery><![CDATA[${addressId}]]></id_address_delivery><id_address_invoice><![CDATA[${addressId}]]></id_address_invoice><id_cart><![CDATA[${cartId}]]></id_cart><id_currency><![CDATA[1]]></id_currency><id_lang><![CDATA[1]]></id_lang><id_customer><![CDATA[${customerId}]]></id_customer><id_carrier><![CDATA[1]]></id_carrier><id_shop_group><![CDATA[1]]></id_shop_group><id_shop><![CDATA[1]]></id_shop><current_state><![CDATA[${orderStateId}]]></current_state><reference><![CDATA[${orderRef}]]></reference><module><![CDATA[ps_wirepayment]]></module><payment><![CDATA[Paiement importé]]></payment><total_paid><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid><total_paid_tax_incl><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid_tax_incl><total_paid_tax_excl><![CDATA[${cartTotalHt.toFixed(6)}]]></total_paid_tax_excl><total_paid_real><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid_real><total_products><![CDATA[${cartTotalHt.toFixed(6)}]]></total_products><total_products_wt><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_products_wt><total_shipping><![CDATA[0.000000]]></total_shipping><total_shipping_tax_incl><![CDATA[0.000000]]></total_shipping_tax_incl><total_shipping_tax_excl><![CDATA[0.000000]]></total_shipping_tax_excl><total_discounts><![CDATA[0.000000]]></total_discounts><total_wrapping><![CDATA[0.000000]]></total_wrapping><conversion_rate><![CDATA[1.000000]]></conversion_rate><date_add><![CDATA[${formattedDate} 12:00:00]]></date_add><date_upd><![CDATA[${formattedDate} 12:00:00]]></date_upd><associations><order_rows>${orderRowsXml}</order_rows></associations></order></prestashop>`;
 
-            for (let s = 0; s < stateList.length; s++) {
-                const stateNode = stateList[s].name?.language;
-                let textName = '';
-
-                if (Array.isArray(stateNode)) {
-                    textName = stateNode[0]['#text'] || '';
-                } else if (stateNode) {
-                    textName = stateNode['#text'] || stateNode;
-                }
-
-                if (textName.toLowerCase().indexOf(etatBrut) !== -1) {
-                    orderStateId = extractId(stateList[s].id);
-                    break;
-                }
-            }
-
-            const orderXmlPayload = `<?xml version="1.0" encoding="UTF-8"?>
-<prestashop>
-    <order>
-        <id_address_delivery>${addressId}</id_address_delivery>
-        <id_address_invoice>${addressId}</id_address_invoice>
-        <id_cart>${cartId}</id_cart>
-        <id_currency>1</id_currency>
-        <id_lang>1</id_lang>
-        <id_customer>${customerId}</id_customer>
-        <id_carrier>1</id_carrier>
-        <id_shop_group>1</id_shop_group>
-        <id_shop>1</id_shop>
-        <current_state>${orderStateId}</current_state>
-        <payment>Paiement importé</payment>
-        <module>ps_wirepayment</module>
-        <total_paid>${cartTotal.toFixed(6)}</total_paid>
-        <total_paid_real>${cartTotal.toFixed(6)}</total_paid_real>
-        <total_products>${cartTotal.toFixed(6)}</total_products>
-        <total_products_wt>${cartTotal.toFixed(6)}</total_products_wt>
-        <conversion_rate>1.000000</conversion_rate>
-    </order>
-</prestashop>`;
-
-            const newOrderResp = await postXml('/orders', orderXmlPayload);
+            const newOrderResp = await postXml('/orders', orderPayload);
             const orderId = extractId(newOrderResp?.prestashop?.order?.id);
 
             if (orderId) {
-                logCallback('info', `Mise à jour de la date historique de la commande #${orderId}...`);
+                if (logCallback) logCallback('debug', `Order created: id=${orderId} ref=${orderRef} cart=${cartId} state=${orderStateId}`);
 
-                // CORRECTION : Le payload PUT est désormais strictement identique au POST pour éviter l'erreur 400
-                const updateOrderDatePayload = `<?xml version="1.0" encoding="UTF-8"?>
-<prestashop>
-    <order>
-        <id>${orderId}</id>
-        <id_address_delivery>${addressId}</id_address_delivery>
-        <id_address_invoice>${addressId}</id_address_invoice>
-        <id_cart>${cartId}</id_cart>
-        <id_currency>1</id_currency>
-        <id_lang>1</id_lang>
-        <id_customer>${customerId}</id_customer>
-        <id_carrier>1</id_carrier>
-        <id_shop_group>1</id_shop_group>
-        <id_shop>1</id_shop>
-        <current_state>${orderStateId}</current_state>
-        <payment>Paiement importé</payment>
-        <module>ps_wirepayment</module>
-        <total_paid>${cartTotal.toFixed(6)}</total_paid>
-        <total_paid_real>${cartTotal.toFixed(6)}</total_paid_real>
-        <total_products>${cartTotal.toFixed(6)}</total_products>
-        <total_products_wt>${cartTotal.toFixed(6)}</total_products_wt>
-        <conversion_rate>1.000000</conversion_rate>
-        <date_add>${formattedDate} 12:00:00</date_add>
-        <date_upd>${formattedDate} 12:00:00</date_upd>
-    </order>
-</prestashop>`;
-                await putXml(`/orders/${orderId}`, updateOrderDatePayload);
-                logCallback('success', `Ligne ${index + 1} importée avec succès. Commande ID : ${orderId}`);
+                // Mettre à jour la date de la commande à la date historique du CSV via un PUT Webservice standard
+                try {
+                    if (logCallback) logCallback('debug', `Updating order date for order ${orderId} to ${formattedDate}`);
+                    const putPayload = `<?xml version="1.0" encoding="UTF-8"?><prestashop><order><id>${orderId}</id><id_address_delivery><![CDATA[${addressId}]]></id_address_delivery><id_address_invoice><![CDATA[${addressId}]]></id_address_invoice><id_cart><![CDATA[${cartId}]]></id_cart><id_currency><![CDATA[1]]></id_currency><id_lang><![CDATA[1]]></id_lang><id_customer><![CDATA[${customerId}]]></id_customer><id_carrier><![CDATA[1]]></id_carrier><id_shop_group><![CDATA[1]]></id_shop_group><id_shop><![CDATA[1]]></id_shop><current_state><![CDATA[${orderStateId}]]></current_state><reference><![CDATA[${orderRef}]]></reference><module><![CDATA[ps_wirepayment]]></module><payment><![CDATA[Paiement importé]]></payment><total_paid><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid><total_paid_tax_incl><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid_tax_incl><total_paid_tax_excl><![CDATA[${cartTotalHt.toFixed(6)}]]></total_paid_tax_excl><total_paid_real><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_paid_real><total_products><![CDATA[${cartTotalHt.toFixed(6)}]]></total_products><total_products_wt><![CDATA[${cartTotalTtc.toFixed(6)}]]></total_products_wt><total_shipping><![CDATA[0.000000]]></total_shipping><total_shipping_tax_incl><![CDATA[0.000000]]></total_shipping_tax_incl><total_shipping_tax_excl><![CDATA[0.000000]]></total_shipping_tax_excl><total_discounts><![CDATA[0.000000]]></total_discounts><total_wrapping><![CDATA[0.000000]]></total_wrapping><conversion_rate><![CDATA[1.000000]]></conversion_rate><date_add><![CDATA[${formattedDate} 12:00:00]]></date_add><date_upd><![CDATA[${formattedDate} 12:00:00]]></date_upd><associations><order_rows>${orderRowsXml}</order_rows></associations></order></prestashop>`;
+                    await putXml(`/orders/${orderId}`, putPayload);
+                    if (logCallback) logCallback('info', `📅 Date de la commande #${orderId} mise à jour avec succès vers ${formattedDate}.`);
+                } catch (dateErr) {
+                    console.error(`Impossible de mettre à jour la date historique de la commande #${orderId}:`, dateErr);
+                    if (logCallback) logCallback('warn', `⚠️ Impossible de mettre à jour la date historique de la commande #${orderId}: ${formatApiError(dateErr)}`);
+                }
+
+                if (logCallback) logCallback('debug', `Forcing state ${orderStateId} for order ${orderId}`);
+                await forceOrderState(orderId, orderStateId, logCallback, {
+                    employeeId,
+                    date: formattedDate
+                });
+
+                if (orderStateId === 5) {
+                    for (const line of linesToDecrement) {
+                        if (logCallback) logCallback('debug', `Preparing movement check for order ${orderId} product ${line.pId} attr ${line.attributeId} qty ${line.quantity}`);
+                        await logOrderMovement(line.pId, line.attributeId, line.quantity, orderId, employeeId, logCallback, formattedDate);
+                    }
+                }
+
+                logCallback('success', `Commande ID ${orderId} importée avec succès.`);
             } else {
-                logCallback('error', `La ligne ${index + 1} a échoué silencieusement (PrestaShop a rejeté la commande).`);
-                logCallback('error', `Détail du refus API : ${JSON.stringify(newOrderResp)}`);
+                logCallback('error', `Échec de création de la commande à la ligne ${index + 1}. Suppression du panier fantôme.`);
+                try { await deleteXml(`/carts/${cartId}`); } catch (delErr) { logCallback('warn', `Impossible de supprimer le panier fantôme ${cartId}`); }
             }
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
-
-        logCallback('success', 'Importation des commandes et paniers terminée avec succès !');
+        logCallback('success', 'Importation terminée !');
     } catch (error) {
-        logCallback('error', `CRITIQUE : Échec de l'importation des commandes : ${error.message}`);
-        logCallback('error', 'Lancement automatique de la procédure de Rollback...');
-        await rollbackOrders(logCallback);
+        console.error('Erreur critique lors de l\'import des commandes:', error);
+        logCallback('error', `Erreur critique : ${formatApiError(error)}`);
+        // Rollback global (tous les imports) en cas d'erreur critique durant l'import des commandes
+        try {
+            await runResetForTargets(resetTargets, (type, message) => logCallback(type, `Rollback global: ${message}`));
+        } catch (e) {
+            console.error('Échec du rollback global:', e);
+            logCallback('warn', `Échec du rollback global : ${formatApiError(e)}`);
+        }
     }
 };

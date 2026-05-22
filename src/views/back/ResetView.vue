@@ -1,43 +1,42 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { deleteXml, getXml } from '@/service/api';
-import { resetTargets as productResetTargets } from '@/service/resetTargets';
-import { resetDeclinaisonTargets } from '@/service/import';
-import { resetOrderTargets } from '@/service/orderImport';
+import { resetTargets as productResetTargets } from '../../service/resetTargets';
+import { runResetForTargets } from '../../service/resetService';
 
-const resetTargets = [...productResetTargets, ...resetDeclinaisonTargets, ...resetOrderTargets];
+// Dédupliquer les targets par clé pour éviter les doublons
+const allTargets = [...productResetTargets];
+const seenKeys = new Set();
+const resetTargets = allTargets.filter(t => {
+  if (seenKeys.has(t.key)) return false;
+  seenKeys.add(t.key);
+  return true;
+});
 
 function getDefaultSelectedKeys() {
   const keys = [];
-
   for (const target of resetTargets) {
     if (target.defaultSelected) {
       keys.push(target.key);
     }
   }
-
   return keys;
 }
 
 function getSelectedTargetsFromKeys(keys) {
   const selected = [];
-
   for (const target of resetTargets) {
     if (keys.includes(target.key)) {
       selected.push(target);
     }
   }
-
   return selected;
 }
 
 function getSelectedLabelFromTargets(targets) {
   const labels = [];
-
   for (const target of targets) {
     labels.push(target.label);
   }
-
   return labels.join(', ');
 }
 
@@ -60,90 +59,6 @@ function addLog(level, message) {
   });
 }
 
-function getCollectionItems(payload, target) {
-  if (!payload || !payload.prestashop || !payload.prestashop[target.collectionKey]) {
-    return [];
-  }
-
-  const collection = payload.prestashop[target.collectionKey][target.itemKey];
-
-  if (Array.isArray(collection)) {
-    return collection;
-  }
-
-  if (collection) {
-    return [collection];
-  }
-
-  return [];
-}
-
-function extractItemId(item) {
-  if (!item) {
-    return null;
-  }
-
-  if (item['@_id']) {
-    return item['@_id'];
-  }
-
-  if (item.id) {
-    return item.id;
-  }
-
-  if (item['@id']) {
-    return item['@id'];
-  }
-
-  return null;
-}
-
-async function fetchIdsForTarget(target) {
-  const pageSize = 100;
-  const uniqueIds = new Set();
-  let page = 1;
-
-  while (true) {
-    const payload = await getXml(`${target.endpoint}?display=[id]&limit=${pageSize}&page=${page}`);
-    const items = getCollectionItems(payload, target);
-
-    if (!items.length) {
-      break;
-    }
-
-    items.forEach((item) => {
-      const itemId = extractItemId(item);
-      if (itemId != null && !target.skipIds.includes(Number(itemId))) {
-        uniqueIds.add(String(itemId));
-      }
-    });
-
-    if (items.length < pageSize) {
-      break;
-    }
-
-    page += 1;
-  }
-
-  return [...uniqueIds];
-}
-
-async function resetTarget(target) {
-  const ids = await fetchIdsForTarget(target);
-
-  if (!ids.length) {
-    addLog('success', `${target.label}: aucune ligne a supprimer.`);
-    return;
-  }
-
-  addLog('info', `${target.label}: ${ids.length} element(s) a supprimer.`);
-
-  for (const id of ids) {
-    await deleteXml(`${target.endpoint}/${id}`);
-    addLog('success', `${target.label}: suppression de l'identifiant ${id}.`);
-  }
-}
-
 async function runReset() {
   if (!canRun.value) {
     return;
@@ -154,15 +69,7 @@ async function runReset() {
 
   try {
     addLog('info', `Tables selectionnees: ${selectedLabel.value}.`);
-
-    for (const target of selectedTargets.value) {
-      try {
-        await resetTarget(target);
-      } catch (error) {
-        addLog('error', `${target.label}: ${error?.message ?? 'erreur inconnue'}.`);
-      }
-    }
-
+    await runResetForTargets(selectedTargets.value, addLog);
     addLog('success', 'Reset termine.');
   } finally {
     isRunning.value = false;
@@ -199,7 +106,8 @@ function toggleAllTargets(event) {
             <h2>Choix precis des entites</h2>
           </div>
           <label class="toggle-all">
-            <input type="checkbox" :checked="selectedTargetKeys.length === resetTargets.length" @change="toggleAllTargets" />
+            <input type="checkbox" :checked="selectedTargetKeys.length === resetTargets.length"
+              @change="toggleAllTargets" />
             <span>Tout selectionner</span>
           </label>
         </div>
@@ -496,6 +404,7 @@ function toggleAllTargets(event) {
 }
 
 @media (max-width: 960px) {
+
   .hero-card,
   .content-grid {
     grid-template-columns: 1fr;
