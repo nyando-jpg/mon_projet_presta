@@ -181,21 +181,9 @@ async function logOrderMovement(pId, attributeId, quantity, orderId, employeeId,
 }
 
 async function forceOrderState(orderId, stateId, logCallback, options = {}) {
-    const stateIdValue = String(stateId);
-    const useCustomEndpoint = stateIdValue === '5' || stateIdValue === '6';
     const { employeeId = 0, date = '' } = options;
 
-    const payload = useCustomEndpoint
-        ? `<?xml version="1.0" encoding="UTF-8"?>
-    <prestashop>
-        <manual_order_state>
-            <id_order><![CDATA[${orderId}]]></id_order>
-            <id_order_state><![CDATA[${stateId}]]></id_order_state>
-            <id_employee><![CDATA[${employeeId}]]></id_employee>
-            <date><![CDATA[${date}]]></date>
-        </manual_order_state>
-    </prestashop>`
-        : `<?xml version="1.0" encoding="UTF-8"?>
+    const payload = `<?xml version="1.0" encoding="UTF-8"?>
     <prestashop>
         <order_history>
             <id_order><![CDATA[${orderId}]]></id_order>
@@ -204,12 +192,31 @@ async function forceOrderState(orderId, stateId, logCallback, options = {}) {
         </order_history>
     </prestashop>`;
 
+    const legacyPayload = `<?xml version="1.0" encoding="UTF-8"?>
+    <prestashop>
+        <manual_order_state>
+            <id_order><![CDATA[${orderId}]]></id_order>
+            <id_order_state><![CDATA[${stateId}]]></id_order_state>
+            <id_employee><![CDATA[${employeeId}]]></id_employee>
+            <date><![CDATA[${date}]]></date>
+        </manual_order_state>
+    </prestashop>`;
+
     try {
-        await postXml(useCustomEndpoint ? '/custom_order_state' : '/order_histories', payload);
+        // Native PrestaShop path: this is the most portable way to set an order state.
+        await postXml('/order_histories', payload);
         if (logCallback) logCallback('info', `✅ État de la commande #${orderId} forcé au statut ${stateId}.`);
     } catch (error) {
-        console.error("Impossible de forcer l'état de la commande:", error);
-        if (logCallback) logCallback('warn', `⚠️ Impossible de forcer l'état de la commande : ${formatApiError(error)}`);
+        // Legacy fallback kept for instances where a custom endpoint exists.
+        try {
+            await postXml('/custom_order_state', legacyPayload);
+            if (logCallback) logCallback('info', `✅ État de la commande #${orderId} forcé via endpoint custom (${stateId}).`);
+        } catch (customErr) {
+            console.error("Impossible de forcer l'état de la commande:", customErr);
+            if (logCallback) {
+                logCallback('warn', `⚠️ Échec /order_histories puis /custom_order_state: ${formatApiError(error)} | Fallback: ${formatApiError(customErr)}`);
+            }
+        }
     }
 }
 

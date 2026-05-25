@@ -69,6 +69,7 @@ export const resetTargets = [
     collectionKey: 'stock_availables',
     itemKey: 'stock_available',
     defaultSelected: true,
+    canDelete: false,
     skipIds: []
   },
   {

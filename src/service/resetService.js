@@ -69,6 +69,11 @@ export async function fetchIdsForTarget(target) {
 }
 
 export async function resetTarget(target, logCallback = () => {}) {
+  if (target.canDelete === false) {
+    logCallback('info', `${target.label}: suppression non supportee par l'API, cible ignoree.`);
+    return;
+  }
+
   const ids = await fetchIdsForTarget(target);
 
   if (!ids.length) {
@@ -85,6 +90,8 @@ export async function resetTarget(target, logCallback = () => {}) {
     } catch (e) {
       if (e.response && e.response.status === 404) {
         logCallback('info', `${target.label}: l'identifiant ${id} est deja supprime.`);
+      } else if (e.response && e.response.status === 405) {
+        logCallback('info', `${target.label}: suppression non autorisee par l'API (id ${id}).`);
       } else {
         logCallback('error', `${target.label}: Erreur lors de la suppression de l'identifiant ${id} (${e.message}).`);
       }
