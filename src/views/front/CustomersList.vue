@@ -2,6 +2,9 @@
 import { ref, onMounted, watch } from 'vue'; // Ajout de watch
 import { useRouter } from 'vue-router';
 import customersService from '@/service/customersService';
+import cartsService from '@/service/cartsService';
+import ordersService from '@/service/ordersService';
+import { setActiveCartId } from '@/utils/cartStorage';
 
 const router = useRouter();
 const customers = ref([]);
@@ -33,8 +36,45 @@ onMounted(loadData);
 // On recharge automatiquement quand filterMode change
 watch(filterMode, loadData);
 
-const selectCustomer = (user) => {
+const resolveOpenCartIdForCustomer = async (customerId) => {
+  const [carts, orders] = await Promise.all([
+    cartsService.getCarts(),
+    ordersService.getOrdersByCustomer(customerId)
+  ]);
+
+  const customerCarts = (carts || [])
+    .filter((cart) => String(cart.id_customer) === String(customerId))
+    .sort((a, b) => {
+      const dateA = new Date(a.date_add || 0).getTime();
+      const dateB = new Date(b.date_add || 0).getTime();
+
+      if (dateA !== dateB) return dateB - dateA;
+      return Number(b.id || 0) - Number(a.id || 0);
+    });
+
+  const openCart = customerCarts.find((cart) => {
+    return !(orders || []).some((order) => String(order.id_cart) === String(cart.id));
+  });
+
+  return openCart?.id || '';
+};
+
+const selectCustomer = async (user) => {
   localStorage.setItem('customer', JSON.stringify(user));
+
+  try {
+    const openCartId = await resolveOpenCartIdForCustomer(user.id);
+    if (openCartId) {
+      setActiveCartId(openCartId);
+    } else {
+      setActiveCartId('');
+      localStorage.removeItem('active_cart_id_guest');
+      localStorage.removeItem('active_cart_id');
+    }
+  } catch (error) {
+    console.warn('Impossible de retrouver le panier du client:', error);
+  }
+
   //appelle  dans App.vue le chargement du customer depuis localStorage
   window.dispatchEvent(new CustomEvent('customer-update'));
   router.push('/frontend/liste-produits');
