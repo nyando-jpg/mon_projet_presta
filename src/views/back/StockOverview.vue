@@ -274,7 +274,7 @@ onMounted(() => {
                   <td>{{ formatQty(product.product_quantity || 0) }}</td>
                   <td>
                     <span :class="['state-badge', `state-${order.current_state}`]">
-                      {{ order.current_state === 2 ? 'Payée' : order.current_state === 11 ? 'Retournée' : `État ${order.current_state}` }}
+                      {{ order.current_state === 2 ? 'Payée' : order.current_state === 11 ? 'Payée' : `État ${order.current_state}` }}
                     </span>
                   </td>
                 </tr>
