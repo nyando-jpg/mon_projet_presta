@@ -36,10 +36,12 @@ export const processImageImport = async (zipFile, logCallback) => {
             const filename = imageFile.name;
 
             // --- FINAL, SIMPLIFIED, AND CORRECT LOGIC ---
-            // The product reference is simply the filename without the extension.
+            // Extract just the filename without path and without extension.
+            // "images/P_10.png" -> "P_10"
             // "M_02.jpeg" -> "M_02"
             // "T_01.png" -> "T_01"
-            const productRef = filename.substring(0, filename.lastIndexOf('.'));
+            const filenameOnly = filename.split('/').pop(); // Remove path
+            const productRef = filenameOnly.substring(0, filenameOnly.lastIndexOf('.'));
 
             if (!productRef) {
                 logCallback('warn', `Fichier ignoré : nom de fichier invalide "${filename}".`);
