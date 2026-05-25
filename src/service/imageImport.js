@@ -14,6 +14,11 @@ export const processImageImport = async (zipFile, logCallback) => {
     logCallback('info', 'Début du traitement du fichier ZIP...');
     const productCache = {};
 
+    const getEntryFilename = (entryName) => {
+        const normalizedName = String(entryName || '').replace(/\\/g, '/');
+        return normalizedName.split('/').pop() || '';
+    };
+
     try {
         const zip = await JSZip.loadAsync(zipFile);
         const imageFiles = [];
@@ -33,7 +38,7 @@ export const processImageImport = async (zipFile, logCallback) => {
         logCallback('success', `${imageFiles.length} image(s) valide(s) trouvé(s) dans le ZIP.`);
 
         for (const [index, imageFile] of imageFiles.entries()) {
-            const filename = imageFile.name;
+            const filename = getEntryFilename(imageFile.name);
 
             // --- FINAL, SIMPLIFIED, AND CORRECT LOGIC ---
             // The product reference is simply the filename without the extension.
