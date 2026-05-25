@@ -39,12 +39,14 @@ const loadActivities = async () => {
     // 1. On filtre les paniers de CE client
     const customerCarts = allCarts.filter(c => String(c.id_customer) === String(customer.id));
 
+    const sortedCustomerCarts = [...customerCarts].sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+
     const cartSummaries = new Map(
-      await Promise.all(customerCarts.map(async (cart) => [String(cart.id), await enrichCartSummary(cart)]))
+      await Promise.all(sortedCustomerCarts.map(async (cart) => [String(cart.id), await enrichCartSummary(cart)]))
     );
 
     // 2. On crée la liste finale
-    items.value = customerCarts.map(cart => {
+    items.value = sortedCustomerCarts.map(cart => {
       // On cherche si une commande est liée à ce panier
       const linkedOrder = allOrders.find(o => String(o.id_cart) === String(cart.id));
       const summary = cartSummaries.get(String(cart.id)) || { cartDate: cart.date_add, itemCount: 0, totalTTC: 0 };
@@ -62,7 +64,7 @@ const loadActivities = async () => {
         total: linkedOrder ? Number(linkedOrder.total_paid) : summary.totalTTC,
         order: linkedOrder || null, // null si pas de commande = "Panier en cours"
       };
-    }).sort((a, b) => b.cartId - a.cartId); // Plus récent en haut
+    });
 
   } catch (error) {
     console.error("Erreur sync client:", error);

@@ -28,9 +28,11 @@ onMounted(async () => {
     customers.value = customersData;
     // Création d'un mapping id_customer => customer pour un accès rapide
     const customersById = Object.fromEntries((customersData || []).map((customer) => [String(customer.id), customer]));
+
+    const sortedCarts = [...(cartsData || [])].sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
     
     // Enrichissement des données des paniers avec les infos de commandes liées et les infos clients
-    carts.value = await Promise.all((cartsData || []).map(async (cart) => {
+    carts.value = await Promise.all(sortedCarts.map(async (cart) => {
       const summary = await enrichCartSummary(cart);
       // On cherche la commande liée à ce panier (si elle existe)
       const linkedOrder = ordersData.find(o => String(o.id_cart) === String(cart.id)) || null;

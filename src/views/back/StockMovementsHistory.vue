@@ -45,10 +45,13 @@ const loadMovements = async () => {
       }
     }
 
-    movements.value = (Array.isArray(data) ? data : []).map((movement) => ({
+    movements.value = (Array.isArray(data) ? data : [])
+      .slice()
+      .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+      .map((movement) => ({
       ...movement,
       productLabel: stockLabelById.get(String(movement.id_stock)) || `Stock #${movement.id_stock || 'N/A'}`
-    }));
+      }));
   } catch (e) {
     console.error('Erreur chargement historique mouvements:', e);
     error.value = 'Impossible de charger l’historique des mouvements.';
