@@ -761,6 +761,8 @@ export default {
     },
 
     // Consomme le stock réservé d'une commande validée (passage de "en attente" à "validée")
+    // Le stock est déjà ajusté par PrestaShop lors du changement d'état,
+    // on ne crée ici que le mouvement d'historique pour éviter une double décrémentation.
     async consumeOrderReservedStock(order) {
         const stockRows = extractStockRowsFromOrder(order);
 
@@ -778,19 +780,16 @@ export default {
             }
 
             const currentQuantity = Number(extractVal(stockNode.quantity)) || 0;
-            const nextQuantity = Math.max(0, currentQuantity - row.quantity);
-
-            await updateStockAvailableQuantity(stockNode, nextQuantity);
-            updated += 1;
 
             try {
                 await createStockMovement({
                     stockNode,
-                    oldQuantity: currentQuantity,
-                    newQuantity: nextQuantity,
+                    oldQuantity: currentQuantity + row.quantity,
+                    newQuantity: currentQuantity,
                     orderId: extractVal(order?.id)
                 });
                 movements += 1;
+                updated += 1;
             } catch (movementError) {
                 console.warn(
                     `Mouvement de stock non enregistré pour la commande ${extractVal(order?.id)}:`,
