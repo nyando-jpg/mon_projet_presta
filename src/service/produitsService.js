@@ -95,6 +95,7 @@ const transformerProduit = (p) => {
         id: idProd, 
         reference: p.reference || "N/A",
         name: extractVal(p.name),
+        id_tax_rules_group: extractVal(p.id_tax_rules_group),
         // Conserver le prix HT brut: l'arrondir ici casse le calcul TTC (ex: 4.73 * 1.056 = 4.99)
         price: p.price ? parseFloat(extractVal(p.price)) : 0,
         wholesalePrice: p.wholesale_price ? parseFloat(extractVal(p.wholesale_price)) : 0,
@@ -219,6 +220,7 @@ const getCombinationDetails = async (combinationId) => {
     }
 };
 
+// Fonction pour construire un libellé de combinaison à partir des détails de ses option_values (ex: "Rouge / Taille L")
 const buildCombinationLabel = (optionValueDetails) => {
     const labelParts = (optionValueDetails || [])
         .map((detail) => detail?.name || detail?.id)

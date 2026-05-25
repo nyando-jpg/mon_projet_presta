@@ -14,8 +14,13 @@ const filtres = ref({
     prixMax: 10000
 });
 
+// Charge les taux de taxe pour une liste de produits donnée, en récupérant les taux de taxe associés à chaque produit via l'API et en stockant les résultats dans un objet de mapping pour un accès rapide lors de l'affichage des produits
+//resultat : taxRatesByProductId.value = { [productId]: taxRate, ... } 
+//soit { "12": 20, "13": 5.5, "14": 20 }
 const loadProductTaxes = async (products) => {
+    //prendre tous les ids de produits uniques pour éviter les appels redondants à l'API
     const uniqueIds = [...new Set((products || []).map((product) => String(product.id)).filter(Boolean))];
+    //prends chaque id de produit et récupère son taux de taxe, puis crée un objet de mapping id => taux pour un accès rapide lors de l'affichage des produits
     const entries = await Promise.all(
         uniqueIds.map(async (productId) => {
             const rate = await taxesService.getProductTaxRate(productId);
@@ -26,24 +31,31 @@ const loadProductTaxes = async (products) => {
     taxRatesByProductId.value = Object.fromEntries(entries);
 };
 
+//prends les declinaisons de stock d'une liste de produits donnée, en récupérant les stocks disponibles associés à chaque produit et à ses déclinaisons
+/*{
+  "42": { "hasCombinations": false, "rows": [{ "label": "Stock principal", "quantity": 15 }] },
+  "43": { "hasCombinations": true,  "rows": [{ "label": "T-shirt Rouge - M", "quantity": 5 }, { "label": "T-shirt Bleu - L", "quantity": 2 }] }
+}
+*/
 const loadProductStocks = async (products) => {
+  //lance tout les produits en parallèle pour récupérer leurs stocks disponibles
     const entries = await Promise.all((products || []).map(async (product) => {
         const stockRows = Array.isArray(product.stockAvailables) ? product.stockAvailables : [];
         const productId = String(product.id);
-
+        // Si le produit n'a pas de stock_available associé, on retourne une structure par défaut avec le stock principal
         if (!stockRows.length) {
             return [productId, {
                 hasCombinations: false,
             rows: [{ label: 'Stock principal', quantity: Number(product.stockQuantity ?? product.quantity ?? 0) }]
             }];
         }
-
+        // Si le produit a des stock_availables associés, on vérifie s'ils sont liés à des déclinaisons (combinations) ou s'ils représentent le stock principal du produit
         const stockManagement = await produitsService.getStockManagementRows(product);
         const productStockQuantity = Number(stockManagement?.productStock?.quantity ?? product.stockQuantity ?? product.quantity ?? 0);
         const combinationRows = Array.isArray(stockManagement?.combinations)
             ? stockManagement.combinations.filter((row) => row && !row.disabled)
             : [];
-
+        // Si le produit a des déclinaisons de stock actives, on retourne une structure indiquant qu'il a des combinaisons avec les quantités correspondantes, sinon on retourne une structure indiquant qu'il n'a pas de combinaisons avec le stock principal
         if (combinationRows.length > 0) {
             return [productId, {
                 hasCombinations: true,
@@ -53,7 +65,7 @@ const loadProductStocks = async (products) => {
                 }))
             }];
         }
-
+        // Cas où le produit a des stock_availables mais aucune combinaison active, on retourne une structure indiquant qu'il n'a pas de combinaisons avec le stock principal
         return [productId, {
             hasCombinations: false,
       rows: [{ label: 'Stock principal', quantity: productStockQuantity }]

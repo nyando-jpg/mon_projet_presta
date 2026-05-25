@@ -26,6 +26,7 @@ const extractVal = (node) => {
     return '';
 };
 
+// Construit un libellé de combinaison à partir des détails de ses option_values (ex: "Rouge / Taille L")
 const buildCombinationLabel = (optionValueDetails) => {
     const labelParts = (optionValueDetails || [])
         .map((detail) => detail?.name || detail?.id)
@@ -34,6 +35,7 @@ const buildCombinationLabel = (optionValueDetails) => {
     return labelParts.length ? labelParts.join(' / ') : 'Combinaison sans libellé';
 };
 
+// Normalise les différentes structures possibles de la liste de mouvements de stock retournée par l'API
 const normalizeStockMovementList = (node) => {
     const raw = node?.stock_movement || node?.stock_movements || node || [];
     return Array.isArray(raw) ? raw : (raw ? [raw] : []);
@@ -45,6 +47,7 @@ let cachedStockMovementReasonIds = {
     '-1': null
 };
 
+// Résout l'ID d'employé à associer aux mouvements de stock, en essayant de récupérer le premier employé existant via l'API, ou en retombant sur une valeur par défaut de 1
 const resolveStockMovementEmployeeId = async () => {
     if (cachedStockMovementEmployeeId) return cachedStockMovementEmployeeId;
 
@@ -69,6 +72,7 @@ const resolveStockMovementEmployeeId = async () => {
     return cachedStockMovementEmployeeId;
 };
 
+// Résout l'ID de raison de mouvement à associer aux mouvements de stock, en fonction du signe du mouvement (entrée ou sortie), en essayant d'abord de récupérer la configuration par défaut correspondante, puis en cherchant une raison de mouvement avec le signe correspondant, et enfin en retombant sur une erreur si aucune raison valide n'est trouvée
 const resolveStockMovementReasonId = async (sign) => {
     const normalizedSign = Number(sign) >= 0 ? 1 : -1;
     if (cachedStockMovementReasonIds[normalizedSign]) return cachedStockMovementReasonIds[normalizedSign];
@@ -120,6 +124,7 @@ const resolveStockMovementReasonId = async (sign) => {
     throw new Error(`Impossible de résoudre la raison de mouvement pour le signe ${normalizedSign}`);
 };
 
+// Crée un mouvement de stock associé à une mise à jour de stock, en calculant la quantité physique à partir de la différence entre l'ancienne et la nouvelle quantité, et en associant les métadonnées nécessaires (employé, raison, date)
 const createStockMovement = async ({ stockData, oldQuantity, newQuantity }) => {
     const delta = newQuantity - oldQuantity;
     if (delta === 0) return null;
@@ -146,6 +151,7 @@ const createStockMovement = async ({ stockData, oldQuantity, newQuantity }) => {
     return postXml('/stock_movements', movementPayload);
 };
 
+// Récupère les détails d'une liste d'option_values à partir de leurs références (ID), en gérant les différentes structures possibles de la réponse API et en appliquant une logique de fallback
 const getOptionValueDetails = async (optionValues) => {
     return Promise.all(
         asArray(optionValues).map(async (optionValueRef) => {
@@ -175,6 +181,7 @@ const getOptionValueDetails = async (optionValues) => {
     );
 };
 
+// Récupère les détails d'une combinaison à partir de son ID, en gérant les différentes structures possibles de la réponse API et en appliquant une logique de fallback pour extraire les IDs d'option_value associés et l'impact prix
 const getCombinationDetails = async (combinationId) => {
     try {
         const combinationResponse = await axios.get(
@@ -211,6 +218,7 @@ const getCombinationDetails = async (combinationId) => {
     }
 };
 
+// Extrait les informations de stock d'un produit, en gérant les différentes structures possibles de la réponse API et en appliquant une logique de fallback pour trouver les stocks disponibles associés au produit et calculer la quantité totale
 export const extractStockFieldsFromProduct = (product) => {
     const rawStocks = product?.associations?.stock_availables?.stock_available || product?.associations?.stock_availables || [];
     const stocksArray = asArray(rawStocks);
@@ -230,6 +238,7 @@ export const extractStockFieldsFromProduct = (product) => {
 export default {
     extractStockFieldsFromProduct,
 
+    // Prépare les données de stock d'un produit pour l'affichage dans la gestion de stock, en récupérant les stocks disponibles associés au produit et à ses déclinaisons, et en calculant les quantités correspondantes
     async getStockManagementRows(product) {
         try {
             if (!product) {
@@ -282,6 +291,7 @@ export default {
         }
     },
 
+    // Met à jour la quantité de stock d'un stock_available donné, en récupérant d'abord les données de stock existantes pour calculer la différence de quantité et créer un mouvement de stock associé, et en gérant les différentes structures possibles de la réponse API
     async updateStockQuantity(stockId, quantity) {
         try {
             const id = String(stockId || '').trim();
@@ -342,11 +352,13 @@ export default {
         }
     },
 
+    //  Récupère les données de stock d'un stock_available donné, en gérant les différentes structures possibles de la réponse API
     async getStockByAttribute(stockId) {
         const response = await axios.get(`/stock_availables/${stockId}`);
         return response.data.stock_available;
     },
 
+    // Récupère la quantité de stock disponible pour un stock_available donné, en gérant les différentes structures possibles de la réponse API et en appliquant une logique de fallback pour trouver le stock_available correspondant dans la collection si la requête par ID échoue
     async getStockQuantity(stockId) {
         try {
             const response = await axios.get(`${BASE_URL}/stock_availables/${stockId}`, {

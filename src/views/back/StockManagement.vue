@@ -92,49 +92,52 @@ onMounted(() => {
   loadProducts();
 });
 </script>
-
 <template>
-  <div class="stocks-page">
-    <div class="page-header">
+  <div>
+    <header>
       <div>
-        <p class="eyebrow">Backend / Stock</p>
+        <small>Backend / Stock</small>
         <h1>Produits et combinaisons</h1>
-        <p class="subtitle">Chaque ligne permet d’ajouter rapidement une quantité au stock correspondant.</p>
+        <p>Chaque ligne permet d’ajouter rapidement une quantité au stock correspondant.</p>
       </div>
 
-      <div class="header-actions">
-        <input v-model="search" class="search-input" type="text" placeholder="Rechercher un produit..." />
-        <button class="refresh-btn" @click="loadProducts" :disabled="loading">Rafraîchir</button>
+      <div>
+        <input v-model="search" type="text" placeholder="Rechercher un produit..." />
+        <button @click="loadProducts" :disabled="loading">Rafraîchir</button>
       </div>
+    </header>
+
+    <div v-if="error">
+      <strong>⚠️ {{ error }}</strong>
     </div>
+    
+    <div v-if="loading">Chargement des produits...</div>
 
-    <div v-if="error" class="alert error">{{ error }}</div>
-    <div v-if="loading" class="state-box">Chargement des produits...</div>
-
-    <div v-else class="products-list">
-      <article v-for="product in filteredProducts" :key="product.id" class="product-card">
-        <div class="product-top">
+    <main v-else>
+      <article v-for="product in filteredProducts" :key="product.id">
+        
+        <section>
           <div>
-            <p class="product-meta">#{{ product.id }} · {{ product.reference || 'Sans référence' }}</p>
+            <small>#{{ product.id }} · {{ product.reference || 'Sans référence' }}</small>
             <h2>{{ product.name }}</h2>
           </div>
 
-          <div class="stock-summary">
-            <span>Stock total</span>
+          <div>
+            <small>STOCK TOTAL</small>
             <strong>{{ getEntryQuantity(product.stockManagement?.productStock) }}</strong>
           </div>
-        </div>
+        </section>
 
-        <div class="stock-grid">
-          <div class="stock-row base-row">
-            <div class="row-info">
-              <p class="row-label">Stock principal</p>
-              <p class="row-detail">ID stock: {{ product.stockManagement?.productStock?.stockId || 'introuvable' }}</p>
+        <ul>
+          <li style="background: #f9f9f9; border-left: 3px solid #000;">
+            <div>
+              <strong>Stock principal</strong>
+              <small>ID stock: {{ product.stockManagement?.productStock?.stockId || 'introuvable' }}</small>
             </div>
 
-            <div class="row-quantity">Actuel: {{ getEntryQuantity(product.stockManagement?.productStock) }}</div>
+            <div>Actuel: {{ getEntryQuantity(product.stockManagement?.productStock) }}</div>
 
-            <div class="row-action">
+            <div>
               <input
                 v-model.number="draftQuantities[rowKey(product.id, product.stockManagement?.productStock?.stockId)]"
                 type="number"
@@ -144,29 +147,28 @@ onMounted(() => {
                 :disabled="!product.stockManagement?.productStock?.stockId"
               />
               <button
-                class="add-btn"
                 :disabled="!product.stockManagement?.productStock?.stockId || savingKey === rowKey(product.id, product.stockManagement?.productStock?.stockId)"
                 @click="submitStockUpdate(product, product.stockManagement?.productStock)"
               >
                 {{ savingKey === rowKey(product.id, product.stockManagement?.productStock?.stockId) ? 'En cours...' : 'Ajouter' }}
               </button>
             </div>
-          </div>
+          </li>
 
-          <div v-if="!product.stockManagement?.combinations?.length" class="no-combinations">
+          <p v-if="!product.stockManagement?.combinations?.length">
             Aucune combinaison disponible pour ce produit.
-          </div>
+          </p>
 
-          <div v-for="combination in product.stockManagement?.combinations || []" :key="combination.id" class="stock-row">
-            <div class="row-info">
-              <p class="row-label">Combinaison #{{ combination.id }}</p>
-              <p class="row-detail">{{ combination.label }}</p>
-              <p class="row-detail muted">Impact prix: {{ combination.priceImpact.toFixed(2) }} €</p>
+          <li v-for="combination in product.stockManagement?.combinations || []" :key="combination.id">
+            <div>
+              <strong>Combinaison #{{ combination.id }}</strong>
+              <span>{{ combination.label }}</span>
+              <small>Impact prix: {{ combination.priceImpact.toFixed(2) }} €</small>
             </div>
 
-            <div class="row-quantity">Actuel: {{ getEntryQuantity(combination) }}</div>
+            <div>Actuel: {{ getEntryQuantity(combination) }}</div>
 
-            <div class="row-action">
+            <div>
               <input
                 v-model.number="draftQuantities[rowKey(product.id, combination.stockId)]"
                 type="number"
@@ -176,251 +178,235 @@ onMounted(() => {
                 :disabled="!combination.stockId"
               />
               <button
-                class="add-btn"
                 :disabled="!combination.stockId || savingKey === rowKey(product.id, combination.stockId)"
                 @click="submitStockUpdate(product, combination)"
               >
                 {{ savingKey === rowKey(product.id, combination.stockId) ? 'En cours...' : 'Ajouter' }}
               </button>
             </div>
-          </div>
-        </div>
+          </li>
+        </ul>
       </article>
 
-      <div v-if="!filteredProducts.length" class="state-box">
+      <div v-if="!filteredProducts.length" style="text-align: center; padding: 40px; color: #999;">
         Aucun produit ne correspond à la recherche.
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
 <style scoped>
-.stocks-page {
-  padding: 24px;
-  background: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
-  min-height: 100%;
-}
-
-.page-header {
+/* Alignement et espacement de l'en-tête général */
+header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
   align-items: flex-end;
+  gap: 20px;
+  padding-bottom: 25px;
+  border-bottom: 1px solid #e5e5e5;
+  margin-bottom: 35px;
+}
+
+header h1 {
+  font-size: 1.85rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin: 5px 0;
+}
+
+header p {
+  color: #666;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+header div:last-child {
+  display: flex;
+  gap: 12px;
+}
+
+/* Formulaires & Inputs modernes (Bordures fines, focus propre) */
+input {
+  padding: 10px 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+input:focus {
+  outline: none;
+  border-color: #000;
+}
+
+/* Boutons épurés et interactifs */
+button {
+  padding: 10px 18px;
+  border: 1px solid #000;
+  border-radius: 6px;
+  background: #000;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+button:hover {
+  background: #222;
+  border-color: #222;
+}
+
+button:disabled {
+  background: #e5e5e5;
+  border-color: #e5e5e5;
+  color: #999;
+  cursor: not-allowed;
+}
+
+/* Bouton secondaire (Rafraîchir) sélectionné par sa position dans le header */
+header button {
+  background: #fff;
+  color: #000;
+  border-color: #ccc;
+}
+
+header button:hover {
+  background: #f9f9f9;
+  border-color: #000;
+}
+
+/* Espacement de la liste principale */
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+/* Cartes produits blanches et épurées */
+article {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 25px;
+}
+
+/* Section titre / infos à l'intérieur de la carte */
+article > section {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   margin-bottom: 20px;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.78rem;
-  color: #6b7280;
+article > section h2 {
+  margin: 4px 0 0 0;
+  font-size: 1.3rem;
+  font-weight: 600;
 }
 
-h1 {
-  margin: 0;
-  font-size: 2rem;
-  color: #111827;
-}
-
-.subtitle {
-  margin: 8px 0 0;
-  color: #4b5563;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.search-input {
-  min-width: 280px;
-  padding: 12px 14px;
-  border: 1px solid #dbe3ee;
-  border-radius: 12px;
-  background: #fff;
-}
-
-.refresh-btn,
-.add-btn {
-  border: none;
-  border-radius: 12px;
-  padding: 12px 16px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.refresh-btn {
-  background: #0f172a;
-  color: #fff;
-}
-
-.products-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.product-card {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid #dde6f1;
-  border-radius: 20px;
-  padding: 18px;
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
-}
-
-.product-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-
-.product-meta {
-  margin: 0 0 4px;
-  color: #64748b;
-  font-size: 0.9rem;
-}
-
-.product-top h2 {
-  margin: 0;
-  font-size: 1.35rem;
-  color: #0f172a;
-}
-
-.stock-summary {
-  min-width: 120px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+/* Badge de stock total à droite */
+article > section > div:last-child {
   text-align: right;
+  background: #f5f5f5;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid #e5e5e5;
 }
 
-.stock-summary span {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+article > section > div:last-child strong {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
 }
 
-.stock-summary strong {
-  font-size: 1.4rem;
-}
-
-.stock-grid {
+/* Listes de déclinaisons */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.stock-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) auto auto;
-  gap: 14px;
+/* Lignes de tableau simulées */
+li {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: #f8fbff;
-  border: 1px solid #e2e8f0;
+  padding: 14px 20px;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
 }
 
-.base-row {
-  background: #f1f5f9;
+/* Conteneur d'informations à gauche dans la ligne */
+li > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
 }
 
-.row-label {
-  margin: 0;
-  font-weight: 700;
-  color: #0f172a;
+li > div:first-child strong {
+  font-size: 0.95rem;
 }
 
-.row-detail {
-  margin: 3px 0 0;
-  color: #475569;
+li > div:first-child span {
+  font-size: 0.9rem;
+  color: #333;
 }
 
-.row-detail.muted {
-  color: #64748b;
-  font-size: 0.92rem;
-}
-
-.row-quantity {
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.row-action {
+/* Conteneur de saisie à droite dans la ligne */
+li > div:last-child {
   display: flex;
   gap: 10px;
-  align-items: center;
-  justify-content: flex-end;
 }
 
-.row-action input {
-  width: 110px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid #dbe3ee;
-  background: #fff;
+li > div:last-child input {
+  width: 100px;
+  text-align: center;
 }
 
-.add-btn {
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  color: #fff;
+/* Textes secondaires (Méta, ID, Muted) */
+small {
+  font-size: 0.8rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.add-btn:disabled,
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+li > div:first-child small {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
-.state-box,
-.alert.error,
-.no-combinations {
-  padding: 16px 18px;
-  border-radius: 14px;
-  background: #fff;
-  border: 1px solid #dbe3ee;
-  color: #475569;
+/* Messages d'alerte */
+p {
+  margin: 5px 0 0 0;
+  color: #666;
+  font-size: 0.9rem;
 }
 
-.alert.error {
-  margin-bottom: 16px;
-  border-color: #fecaca;
-  background: #fff1f2;
-  color: #b91c1c;
-}
-
-.no-combinations {
-  background: #fffbeb;
-  border-color: #fde68a;
-  color: #92400e;
-}
-
-@media (max-width: 900px) {
-  .page-header,
-  .product-top,
-  .stock-row {
-    grid-template-columns: 1fr;
-    display: grid;
+/* Responsive fluide */
+@media (max-width: 768px) {
+  header, article > section, li {
+    flex-direction: column;
     align-items: stretch;
+    gap: 15px;
   }
-
-  .header-actions,
-  .row-action {
-    justify-content: flex-start;
-  }
-
-  .search-input {
-    min-width: 0;
+  
+  header div:last-child, li > div:last-child {
     width: 100%;
+  }
+  
+  header div:last-child input, li > div:last-child input {
+    flex: 1;
+  }
+  
+  article > section > div:last-child {
+    text-align: left;
   }
 }
 </style>

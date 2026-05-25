@@ -278,350 +278,213 @@ const allerAuPanier = () => { router.push('/frontend/panier'); };
 </script>
 
 <template>
+  <div>
     <div v-if="loading">Chargement des détails...</div>
-    <div v-else-if="produit" class="detail-container">
-        <button @click="router.back()">⬅ Retour à la liste</button>
+    
+    <div v-else-if="produit">
+      <button @click="router.back()">⬅ Retour à la liste</button>
+      
+      <h1>{{ produit.name }}</h1>
+      
+      <section>
+        <p><strong>Référence :</strong> {{ produit.reference }}</p>
+        <p><strong>Prix HT :</strong> <span>{{ currentPriceHT }} €</span></p>
+        <p><strong>Prix TTC :</strong> <strong>{{ currentPriceTTC }} €</strong></p>
+        <p><strong>Stock :</strong> <span>{{ stockQuantity ?? produit.quantity ?? 0 }}</span></p>
+        <p><strong>État :</strong> {{ produit.condition }}</p>
+      </section>
+
+      <section>
+        <div v-if="optionGroups.length > 0">
+          <div v-for="group in optionGroups" :key="group.id">
+            <label>{{ group.name }}</label>
+            <select v-model="selectedOptions[group.id]" @change="loadCombination">
+              <option v-for="value in group.values" :key="value.id" :value="value.id">
+                {{ value.name }}
+              </option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label>Quantité :</label>
+          <div>
+            <button @click="quantite > 1 ? quantite-- : null"> - </button>
+            <input type="number" v-model="quantite" min="1" style="width: 50px; text-align: center;"/>
+            <button @click="quantite++"> + </button>
+          </div>
+        </div>
+
+        <button @click="commanderProduit" :disabled="!combinationId" style="width: 100%; margin-top: 15px;">
+          🛒 Commander
+        </button>
+      </section>
+    </div>
+
+    <dialog v-if="showStockWarningModal" @click="annulerStockWarning">
+      <div @click.stop>
+        <button @click="annulerStockWarning">✕</button>
+        <h2>Stock insuffisant</h2>
+        <p>
+          La quantité demandée est de <strong>{{ quantite }}</strong> alors que le stock disponible est de
+          <strong>{{ stockQuantity ?? produit.quantity ?? 0 }}</strong>.
+        </p>
+        <p>Voulez-vous annuler ou poursuivre quand même ?</p>
+
+        <footer>
+          <button @click="annulerStockWarning">Annuler</button>
+          <button @click="poursuivreStockWarning" style="background: #000; color: #fff;">Poursuivre</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog v-if="showSuccessModal" @click="closeModal">
+      <div @click.stop>
+        <button @click="closeModal">✕</button>
+        <h2>✓ Produit ajouté au panier</h2>
         
-        <h1>{{ produit.name }}</h1>
-        
-        <div class="card">
-            <p><strong>Référence :</strong> {{ produit.reference }}</p>
-            <p>
-                <strong>Prix HT :</strong> 
-                <span class="price-ht">{{ currentPriceHT }} €</span>
-            </p>
-            <p>
-                <strong>Prix TTC :</strong> 
-                <span class="price-ttc">{{ currentPriceTTC }} €</span>
-            </p>
-            <p>
-                <strong>Stock :</strong>
-                <span class="stock-value">{{ stockQuantity ?? produit.quantity ?? 0 }}</span>
-            </p>
-            <p><strong>État :</strong> {{ produit.condition }}</p>
-        </div>
+        <fieldset v-if="lastAddedItem">
+          <h3>{{ lastAddedItem.name }}</h3>
+          <p>HT: {{ lastAddedItem.priceHT }} €</p>
+          <p><strong>TTC: {{ lastAddedItem.priceTTC }} €</strong></p>
+          <p>Quantité : {{ lastAddedItem.quantity }}</p>
+        </fieldset>
 
-        <div class="achat-box">
-            <div v-if="optionGroups.length > 0" class="options">
-                <div v-for="group in optionGroups" :key="group.id" class="option-group">
-                    <label>{{ group.name }}</label>
-                    <select v-model="selectedOptions[group.id]" @change="loadCombination">
-                        <option v-for="value in group.values" :key="value.id" :value="value.id">
-                            {{ value.name }}
-                        </option>
-                    </select>
-                </div>
-            </div>
+        <fieldset>
+          <p>Il y a <strong>{{ getTotalItems() }}</strong> article(s) dans votre panier.</p>
+          <div>
+            <span>Total HT : </span>
+            <span>{{ getSubTotal() }} €</span>
+          </div>
+          <div>
+            <span><strong>Total TTC : </strong></span>
+            <strong>{{ getSubTotalTTC() }} €</strong>
+          </div>
+        </fieldset>
 
-            <div class="quantite-selector">
-                <label>Quantité :</label>
-                <div class="qty-controls">
-                    <button @click="quantite > 1 ? quantite-- : null"> - </button>
-                    <input type="number" v-model="quantite" min="1" style="width: 50px; text-align: center;"/>
-                    <button @click="quantite++"> + </button>
-                </div>
-            </div>
-
-            <button class="btn-panier" @click="commanderProduit" :disabled="!combinationId">
-                🛒 Commander
-            </button>
-        </div>
-    </div>
-
-    <div v-if="showStockWarningModal" class="modal-overlay" @click="annulerStockWarning">
-        <div class="modal-content stock-warning-modal" @click.stop>
-            <button class="modal-close" @click="annulerStockWarning">✕</button>
-            <h2 class="warning-title">Stock insuffisant</h2>
-            <p>
-                La quantité demandée est de <strong>{{ quantite }}</strong> alors que le stock disponible est de
-                <strong>{{ stockQuantity ?? produit.quantity ?? 0 }}</strong>.
-            </p>
-            <p>Voulez-vous annuler ou poursuivre quand même ?</p>
-
-            <div class="modal-buttons">
-                <button class="btn-continue" @click="annulerStockWarning">Annuler</button>
-                <button class="btn-order" @click="poursuivreStockWarning">Poursuivre</button>
-            </div>
-        </div>
-    </div>
-
-    <div v-if="showSuccessModal" class="modal-overlay" @click="closeModal">
-        <div class="modal-content" @click.stop>
-            <button class="modal-close" @click="closeModal">✕</button>
-            <h2 class="success-title">✓ Produit ajouté au panier</h2>
-            
-            <div class="cart-item-display" v-if="lastAddedItem">
-                <h3>{{ lastAddedItem.name }}</h3>
-                <p class="item-price item-price-ht">HT: {{ lastAddedItem.priceHT }} €</p>
-                <p class="item-price item-price-ttc">TTC: {{ lastAddedItem.priceTTC }} €</p>
-                <p class="item-qty">Quantité : {{ lastAddedItem.quantity }}</p>
-            </div>
-
-            <div class="cart-summary">
-                <p>Il y a <strong>{{ getTotalItems() }}</strong> article(s) dans votre panier.</p>
-                <div class="summary-row total">
-                    <span>Total HT</span>
-                    <span class="price-value">{{ getSubTotal() }} €</span>
-                </div>
-                <div class="summary-row total">
-                    <span>Total TTC</span>
-                    <span class="price-value">{{ getSubTotalTTC() }} €</span>
-                </div>
-            </div>
-
-            <div class="modal-buttons">
-                <button class="btn-continue" @click="continuerAchats">Continuer</button>
-                <button class="btn-order" @click="allerAuPanier">Commander</button>
-            </div>
-        </div>
-    </div>
+        <footer>
+          <button @click="continuerAchats">Continuer</button>
+          <button @click="allerAuPanier" style="background: #000; color: #fff;">Commander</button>
+        </footer>
+      </div>
+    </dialog>
+  </div>
 </template>
 
 <style scoped>
-.card, .achat-box {
-    border: 1px solid #ddd;
-    padding: 20px;
-    border-radius: 8px;
-    margin-top: 15px;
+/* Blocs principaux d'informations (Sections de la fiche) */
+section {
+  border: 1px solid #ccc;
+  padding: 20px;
+  background: #fff;
+  margin-top: 15px;
 }
 
-.gallery {
-    display: flex;
-    gap: 10px;
-    margin: 15px 0;
+section p {
+  margin: 8px 0;
 }
 
-.thumb {
-    width: 60px;
-    height: 60px;
-    object-fit: cover;
-    cursor: pointer;
-    border: 2px solid transparent;
-    border-radius: 5px;
+/* Gestionnaires d'options et formulaires */
+label {
+  display: block;
+  margin: 10px 0 5px;
+  font-weight: bold;
+  font-size: 0.9em;
 }
 
-.thumb:hover {
-    border-color: #42b983;
+select {
+  width: 100%;
+  max-width: 320px;
+  padding: 6px;
+  border: 1px solid #000;
+  background: #fff;
 }
 
-.price {
-    font-size: 1.1em;
-    font-weight: bold;
-    color: #e74c3c;
+/* Contrôles de quantité */
+section div > div {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
 }
 
-.option-group {
-    margin-bottom: 15px;
+/* Boutons et Inputs neutres */
+button, input {
+  padding: 6px 12px;
+  border: 1px solid #000;
+  background: #fff;
+  color: #000;
+  cursor: pointer;
 }
 
-.option-group label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 600;
+button:hover {
+  background: #eee;
 }
 
-.option-group select {
-    width: 100%;
-    max-width: 320px;
-    padding: 8px;
+button:disabled {
+  background: #ccc;
+  border-color: #ccc;
+  cursor: not-allowed;
 }
 
-.quantite-selector {
-    margin: 15px 0;
+/* Fenêtres Modales (Remplacées par la balise sémantique <dialog>) */
+dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  border: none;
 }
 
-.qty-controls {
-    display: flex;
-    gap: 10px;
-    margin-top: 8px;
+/* Conteneur interne de la modale */
+dialog > div {
+  background: #fff;
+  padding: 25px;
+  max-width: 450px;
+  width: 90%;
+  border: 1px solid #000;
+  position: relative;
 }
 
-.qty-controls button {
-    padding: 6px 12px;
-    cursor: pointer;
+/* Bouton de fermeture de la modale (petite croix) */
+dialog > div > button:first-child {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 20px;
+  padding: 5px;
 }
 
-.btn-panier {
-    width: 100%;
-    padding: 12px;
-    background: #42b983;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: bold;
-    margin-top: 15px;
+/* Encadrés récapitulatifs dans les modales */
+fieldset {
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  padding: 12px;
+  margin: 15px 0;
 }
 
-.btn-panier:hover {
-    background: #359a73;
+fieldset div {
+  display: flex;
+  justify-content: space-between;
+  margin: 6px 0;
 }
 
-/* Modal */
-.modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
+/* Pied de la modale pour l'alignement des actions */
+dialog footer {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
 }
 
-.modal-content {
-    background: white;
-    border-radius: 10px;
-    padding: 30px;
-    max-width: 450px;
-    width: 90%;
-    box-shadow: 0 5px 25px rgba(0, 0, 0, 0.2);
-    position: relative;
-}
-
-.modal-close {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: #999;
-}
-
-.success-title {
-    color: #27ae60;
-    margin-bottom: 20px;
-}
-
-.cart-item-display {
-    background: #f9f9f9;
-    padding: 15px;
-    border-radius: 6px;
-    margin-bottom: 20px;
-    border-left: 4px solid #42b983;
-}
-
-.cart-item-display h3 {
-    margin: 0 0 10px 0;
-}
-
-.item-dimension, .item-qty {
-    margin: 5px 0;
-    font-size: 0.9em;
-    color: #666;
-}
-
-.item-price {
-    font-weight: bold;
-    color: #e74c3c;
-    font-size: 1.1em;
-    margin: 10px 0;
-}
-
-.item-price-ht {
-    color: #7f8c8d;
-}
-
-.item-price-ttc {
-    color: #2ecc71;
-}
-
-.cart-summary {
-    background: #f0f7ff;
-    padding: 15px;
-    border-radius: 6px;
-    margin-bottom: 20px;
-    font-size: 0.95em;
-}
-
-.summary-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 8px 0;
-    border-bottom: 1px solid #ddd;
-}
-
-.summary-row.total {
-    border: none;
-    border-top: 2px solid #ddd;
-    padding-top: 10px;
-    margin-top: 5px;
-    font-weight: bold;
-}
-
-.price-value {
-    font-weight: bold;
-    color: #e74c3c;
-}
-
-.btn-continue {
-    width: 100%;
-    padding: 12px;
-    background: #42b983;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.btn-continue:hover {
-    background: #359a73;
-}
-
-.modal-buttons {
-    display: flex;
-    gap: 10px;
-}
-
-
-.stock-warning-modal {
-    max-width: 520px;
-}
-
-.warning-title {
-    margin-top: 0;
-    color: #c0392b;
-}
-.btn-order {
-    flex: 1;
-    padding: 12px;
-    background: #3498db;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-.btn-order:hover {
-    background: #2980b9;
-}
-
-.btn-continue {
-    flex: 1;
-}
-
-.price-ht {
-    color: #7f8c8d;
-    font-size: 0.9em;
-    text-decoration: none;
-}
-
-.price-ttc {
-    color: #2ecc71;
-    font-weight: bold;
-    font-size: 1.4em;
-    margin-left: 10px;
-}
-
-.stock-value {
-    font-weight: bold;
-    color: #2c3e50;
-    margin-left: 10px;
+dialog footer button {
+  flex: 1;
+  padding: 10px;
 }
 </style>

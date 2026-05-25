@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
+import produitsService from '@/service/produitsService';
 
 const BASE_URL = 'http://localhost/prestashop1/api';
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
@@ -25,26 +26,19 @@ const extractVal = (node) => {
     return '';
 };
 
+// Récupère le taux de taxe applicable à un produit donné, en suivant les relations entre produit, groupe de règles de taxe, règle de taxe et taxe, et en gérant les différentes structures possibles de la réponse API à chaque étape
 export async function getProductTaxRate(productId) {
     try {
         const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
 
-        const productRes = await axios.get(
-            `${BASE_URL}/products/${productId}`,
-            {
-                auth: { username: WS_KEY, password: '' },
-                responseType: 'text'
-            }
-        );
-
-        const productJson = parser.parse(productRes.data);
-        const product = productJson?.prestashop?.product;
+        // Récupère les données du produit pour obtenir l'ID du groupe de règles de taxe associé
+        const product = await produitsService.getProduitById(productId);
         const taxGroupId = extractVal(product?.id_tax_rules_group);
 
         if (!taxGroupId || taxGroupId === '0') {
             return null;
         }
-
+        // Récupère les règles de taxe associées au groupe de règles de taxe du produit
         const rulesRes = await axios.get(
             `${BASE_URL}/tax_rules?filter[id_tax_rules_group]=[${taxGroupId}]&display=full`,
             {
@@ -59,7 +53,7 @@ export async function getProductTaxRate(productId) {
         if (!rules) {
             return null;
         }
-
+        
         const rule = Array.isArray(rules) ? rules[0] : rules;
         const taxId = extractVal(rule?.id_tax);
 
@@ -67,6 +61,7 @@ export async function getProductTaxRate(productId) {
             return null;
         }
 
+        // Récupère les données de la taxe pour obtenir le taux de taxe applicable
         const taxRes = await axios.get(
             `${BASE_URL}/taxes/${taxId}`,
             {
@@ -107,6 +102,7 @@ export async function getDefaultTaxRate() {
     }
 }
 
+// Calcule le prix TTC à partir du prix HT et du taux de taxe, en gérant les cas où les entrées ne sont pas des nombres valides et en arrondissant le résultat à 2 décimales
 export function calculatePriceTTC(priceHT, taxRate) {
     const ht = parseFloat(priceHT);
     const rate = parseFloat(taxRate);

@@ -56,7 +56,7 @@ const setActiveCartId = (cartId) => {
   localStorage.removeItem(storageKey);
 };
 
-
+// Transfère le panier d'un visiteur invité vers un client identifié lors de la connexion, en associant l'ID du panier invité à l'ID du client dans le localStorage et en supprimant la référence au panier invité
 const migrateGuestCartToCustomer = (customerId) => {
   if (!customerId) return null;
 

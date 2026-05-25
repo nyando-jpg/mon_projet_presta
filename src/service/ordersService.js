@@ -25,6 +25,7 @@ const asArray = (value) => {
     return Array.isArray(value) ? value : [value];
 };
 
+// Extrait les lignes de stock d'une commande, en normalisant les différentes structures possibles de la réponse API
 const extractStockRowsFromOrder = (order) => {
     const rows = asArray(order?.products || order?.associations?.order_rows?.order_row || []);
 
@@ -37,6 +38,7 @@ const extractStockRowsFromOrder = (order) => {
         .filter((row) => row.id_product && row.quantity > 0);
 };
 
+// Récupère le stock disponible pour un produit et une déclinaison donnée, en appliquant la logique de priorité id_shop_group > id_shop > global
 const getStockAvailableNode = async (productId, productAttributeId) => {
     const response = await axios.get(
         `${BASE_URL}/stock_availables?display=full&filter[id_product]=[${productId}]&filter[id_product_attribute]=[${productAttributeId}]`,
@@ -58,6 +60,7 @@ const getStockAvailableNode = async (productId, productAttributeId) => {
     return preferredStock || null;
 };
 
+// Met à jour la quantité disponible d'un stock et crée un mouvement de stock associé
 const updateStockAvailableQuantity = async (stockNode, quantity) => {
     if (!stockNode?.id) {
         throw new Error('Stock disponible introuvable.');
@@ -114,11 +117,13 @@ let cachedStockMovementReasonIds = {
     '-1': null
 };
 
+// Normalise les différentes structures possibles de la réponse API pour les mouvements de stock
 const normalizeStockMovementList = (node) => {
     const raw = node?.stock_movement || node?.stock_movements || node || [];
     return Array.isArray(raw) ? raw : (raw ? [raw] : []);
 };
 
+// Résout l'ID de l'employé à associer aux mouvements de stock (obligatoire pour la création)
 const resolveStockMovementEmployeeId = async () => {
     if (cachedStockMovementEmployeeId) return cachedStockMovementEmployeeId;
 
@@ -143,6 +148,7 @@ const resolveStockMovementEmployeeId = async () => {
     return cachedStockMovementEmployeeId;
 };
 
+// Résout l'ID de la raison de mouvement de stock à utiliser en fonction du signe (entrée ou sortie)
 const resolveStockMovementReasonId = async (sign) => {
     const normalizedSign = Number(sign) >= 0 ? 1 : -1;
     if (cachedStockMovementReasonIds[normalizedSign]) return cachedStockMovementReasonIds[normalizedSign];
@@ -194,6 +200,7 @@ const resolveStockMovementReasonId = async (sign) => {
     throw new Error(`Impossible de résoudre la raison de mouvement pour le signe ${normalizedSign}`);
 };
 
+// Crée un mouvement de stock en fonction de la variation de quantité d'un produit
 const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderId = null }) => {
     const delta = newQuantity - oldQuantity;
     if (delta === 0) return null;
@@ -250,6 +257,7 @@ const createStockMovement = async ({ stockNode, oldQuantity, newQuantity, orderI
     }
 };
 
+// Normalise les lignes de panier extraites pour les préparer à la mise à jour du panier avant création de commande
 const normalizeDuplicateStockRows = (cart) => {
     const rows = asArray(cart?.associations?.cart_rows?.cart_row || []);
 
@@ -299,6 +307,7 @@ const transformerOrder = (o) => {
 };
 
 export default {
+    // Récupère la liste des états de commande
     async getStockMovementsHistory() {
         try {
             const response = await axios.get(`${BASE_URL}/stock_movements`, {
@@ -639,6 +648,7 @@ export default {
         }
     },
 
+    // Récupère l'historique d'une commande (états précédents, dates, employés associés)
     async getOrderHistory(orderId) {
         try {
             const response = await axios.get(`${BASE_URL}/order_histories`, {
@@ -672,6 +682,7 @@ export default {
         }
     },
 
+    // Vérifie la disponibilité en stock des produits d'un panier avant création de commande
     async checkDuplicateStockAvailability(cart, multiplier = 1) {
         const stockRows = normalizeDuplicateStockRows(cart);
         const factor = Math.max(1, parseInt(multiplier, 10) || 1);
@@ -725,6 +736,7 @@ export default {
         }
     },
 
+    // Restaure le stock réservé d'une commande annulée ou retournée
     async restoreOrderReservedStock(order) {
         const stockRows = extractStockRowsFromOrder(order);
 
@@ -748,6 +760,7 @@ export default {
         return { updated };
     },
 
+    // Consomme le stock réservé d'une commande validée (passage de "en attente" à "validée")
     async consumeOrderReservedStock(order) {
         const stockRows = extractStockRowsFromOrder(order);
 

@@ -1,8 +1,5 @@
-// Axios prends les donnees du back
 import axios from 'axios';
 
-// XMLParser : XML en Json
-// XMLBuilder : Json en XML
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
 const WS_KEY = 'JIL969E9LBVRP7RUYHT3ZGWDVF9PDF4W';
@@ -183,6 +180,7 @@ export default {
         }
     },
 
+    // updateCartAddresses : Met à jour les adresses de livraison et de facturation d'un panier
     async updateCartAddresses(cartId, idAddress, idCarrier) {
         try {
             // 1. Récupération du panier
