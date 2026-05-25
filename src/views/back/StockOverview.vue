@@ -296,6 +296,9 @@ onMounted(() => {
   padding: 24px;
   background: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
   min-height: 100%;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .page-header {
@@ -304,6 +307,7 @@ onMounted(() => {
   gap: 16px;
   align-items: flex-end;
   margin-bottom: 20px;
+  width: 100%;
 }
 
 .eyebrow {
@@ -336,6 +340,8 @@ h1 {
   border-radius: 20px;
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
   overflow: hidden;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .summary-strip {
@@ -371,6 +377,7 @@ h1 {
 
 .table-responsive {
   overflow-x: auto;
+  width: 100%;
 }
 
 .modern-table {
