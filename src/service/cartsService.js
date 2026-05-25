@@ -158,6 +158,89 @@ export default {
             throw error;
         }
     },
+
+    /**
+     * removeFromCart : Supprime réellement une ligne du panier côté serveur.
+     */
+    async removeFromCart(payload) {
+        const { id_product, id_product_attribute, id_cart } = payload;
+
+        if (!id_cart) {
+            throw new Error('ID du panier manquant.');
+        }
+
+        const targetProductId = String(id_product || '').trim();
+        const targetAttributeId = String(id_product_attribute || '0').trim() || '0';
+
+        if (!targetProductId) {
+            throw new Error('ID produit manquant.');
+        }
+
+        try {
+            const getRes = await axios.get(`${BASE_URL}/carts/${id_cart}`, {
+                auth: { username: WS_KEY, password: '' },
+                responseType: 'text'
+            });
+
+            const currentData = parser.parse(getRes.data);
+            const cart = currentData.prestashop?.cart;
+
+            if (!cart) {
+                throw new Error('Panier introuvable.');
+            }
+
+            const rawRows = cart.associations?.cart_rows?.cart_row;
+            const currentRows = asArray(rawRows);
+            const remainingRows = currentRows.filter((row) => {
+                const rowProductId = String(extractVal(row.id_product)).trim();
+                const rowAttributeId = String(extractVal(row.id_product_attribute || '0')).trim() || '0';
+                return !(rowProductId === targetProductId && rowAttributeId === targetAttributeId);
+            });
+
+            const builder = new XMLBuilder({ ignoreAttributes: false, attributeNamePrefix: '@@', format: true });
+            const xmlObject = {
+                prestashop: {
+                    '@@xmlns:xlink': 'http://www.w3.org/1999/xlink',
+                    cart: {
+                        id: extractVal(cart.id) || id_cart,
+                        id_customer: extractVal(cart.id_customer) || '0',
+                        id_lang: extractVal(cart.id_lang) || '1',
+                        id_shop: extractVal(cart.id_shop) || '1',
+                        id_shop_group: extractVal(cart.id_shop_group) || '1',
+                        id_currency: extractVal(cart.id_currency) || '1',
+                        id_address_delivery: extractVal(cart.id_address_delivery) || '0',
+                        id_address_invoice: extractVal(cart.id_address_invoice) || '0',
+                        id_carrier: extractVal(cart.id_carrier) || '0',
+                        associations: {
+                            cart_rows: {
+                                cart_row: remainingRows.map((row) => ({
+                                    id_product: extractVal(row.id_product),
+                                    id_product_attribute: extractVal(row.id_product_attribute) || '0',
+                                    id_address_delivery: extractVal(row.id_address_delivery) || '0',
+                                    quantity: extractVal(row.quantity) || '0'
+                                }))
+                            }
+                        }
+                    }
+                }
+            };
+
+            const xmlData = builder.build(xmlObject);
+            const response = await axios({
+                method: 'put',
+                url: `${BASE_URL}/carts/${id_cart}`,
+                auth: { username: WS_KEY, password: '' },
+                data: xmlData,
+                headers: { 'Content-Type': 'application/xml' }
+            });
+
+            const result = parser.parse(response.data);
+            return result.prestashop?.cart;
+        } catch (error) {
+            console.error('Erreur suppression ligne panier :', error.response?.data || error.message);
+            throw error;
+        }
+    },
     /**
      * getCart : Récupère le contenu brut du panier depuis PrestaShop
      */

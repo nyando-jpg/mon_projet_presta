@@ -174,16 +174,12 @@ const savePanier = async (index) => {
 
 const removeItem = async (index) => {
     const item = panier.value[index];
-    // Pour supprimer, on envoie la quantité négative totale dans ta logique actuelle
     const cartId = getActiveCartId();
-    const currentCustomerId = getCurrentCustomerId();
 
     try {
-        await cartsService.addToCart({
+        await cartsService.removeFromCart({
             id_product: item.id_product,
             id_product_attribute: item.id_product_attribute,
-            quantity: -item.quantity,
-            id_customer: currentCustomerId || '0',
             id_cart: cartId
         });
         await fetchPanierFromServer();
