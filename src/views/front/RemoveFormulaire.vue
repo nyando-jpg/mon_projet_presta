@@ -62,7 +62,7 @@ const handleRemove = async () => {
       return;
     }
 
-    let totalPrevu = nb * prodsInCategory.length;
+    let totalPrevu = 0;
     let totalRealise = 0;
     const details = [];
 
@@ -79,13 +79,12 @@ const handleRemove = async () => {
       const stockInfo = await stockService.getStockManagementRows(productFull);
       const { productStock, combinations } = stockInfo;
       
-      const allStocks = [];
-      if (productStock && productStock.stockId) {
-        allStocks.push({ ...productStock, isBase: true });
-      }
-      if (combinations && combinations.length > 0) {
-        allStocks.push(...combinations.map(c => ({ ...c, isBase: false })));
-      }
+      const combinationStocks = (combinations || []).filter((stock) => stock && stock.stockId);
+      const allStocks = combinationStocks.length > 0
+        ? combinationStocks.map((stock) => ({ ...stock, isBase: false }))
+        : (productStock && productStock.stockId ? [{ ...productStock, isBase: true }] : []);
+
+      totalPrevu += nb * allStocks.length;
      
       for (const stock of allStocks) {
         if (!stock.stockId) continue;
@@ -98,7 +97,6 @@ const handleRemove = async () => {
             await stockService.updateStockQuantity(stock.stockId, currentStock - reductionQty);
             qtyEliminee += reductionQty;
           } catch (error) {
-            console.error(`Erreur réduction stock ${stock.stockId}:`, error);
           }
         }
       }
