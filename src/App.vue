@@ -94,6 +94,7 @@
           <div class="sidebar-nav">
             <RouterLink to="/frontend/liste-produits">🛍️ Produits</RouterLink>
             <RouterLink to="/frontend/mes-commandes">📋 Mes Commandes</RouterLink>
+            <RouterLink to="/frontend/remove-stock">📋 Remove stock</RouterLink>
           </div>
           <div class="sidebar-footer">
             <hr v-if="currentCustomer" />

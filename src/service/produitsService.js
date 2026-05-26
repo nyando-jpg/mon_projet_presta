@@ -574,6 +574,36 @@ export default {
     },
 
     /**
+     * getProduitsByCategory : Récupère les produits d'une catégorie donnée
+     */
+    async getProduitsByCategory(categoryId) {
+        try {
+            const allProducts = await this.getProduits();
+            const prods = allProducts.products || [];
+            
+            // Filter products that belong to this category
+            return prods.filter(p => 
+                p.categories && Array.isArray(p.categories) && 
+                p.categories.includes(String(categoryId))
+            );
+        } catch (error) {
+            console.error(`Erreur lecture produits catégorie ${categoryId}:`, error);
+            return [];
+        }
+    },
+
+    /**
+     * getProductById : Alias pour getProduitById (pour compatibilité)
+     */
+    async getProductById(id) {
+        return this.getProduitById(id);
+    },
+    
+
+
+
+
+    /**
      * getStockQuantity : Récupère la quantité numérique pour un ID de stock donné
      * Essaye le per-id, puis fallback sur la collection si 404
      */

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+// import Login from '../views/front/Login.vue'
 // import HomeView from '../views/HomeView.vue'
 // import AboutView from '../views/AboutView.vue'
 
@@ -61,6 +62,16 @@ const router = createRouter({
       path: '/frontend/mes-commandes',
       name: 'MesCommandes',
       component: () => import('../views/front/MesCommandes.vue')
+    },
+    {
+      path: '/frontend/remove-formulaire',
+      name: 'RemoveFormulaire',
+      component: () => import('../views/front/RemoveFormulaire.vue')
+    },
+    {
+      path: '/frontend/remove-stock',
+      name: 'RemoveStock',
+      component: () => import('../views/front/RemoveStock.vue')
     },
 
 
