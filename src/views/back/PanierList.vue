@@ -194,33 +194,170 @@ const markAsCanceled = (orderId) => updateOrderStatus(orderId, 6);
 </template>
 
 <style scoped>
-.monitor-container { padding: 20px; font-family: sans-serif; }
-.modern-table { width: 100%; border-collapse: collapse; background: white; }
-.modern-table th { text-align: left; padding: 12px; background: #f4f4f4; border-bottom: 2px solid #ddd; font-size: 13px; }
-.modern-table td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-
-.price { font-weight: bold; color: #2ecc71; }
-
-.ref-badge { background: #e3f2fd; color: #1976d2; padding: 3px 7px; border-radius: 4px; font-weight: bold; font-family: monospace; }
-
-.state-indicator { display: flex; align-items: center; gap: 8px; font-weight: 500; }
-.dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.1); }
-
-.action-cell { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.action-btn {
-  border: none;
-  border-radius: 6px;
-  padding: 7px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.15s ease;
+.monitor-container {
+  padding: 22px;
+  background: linear-gradient(180deg, #e6f0f4 0%, #d9eaf0 100%);
+  min-height: 100vh;
 }
 
-.action-btn:hover { transform: translateY(-1px); }
-.action-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-.deliver-btn { background: #2ecc71; color: white; }
-.cancel-btn { background: #e74c3c; color: white; }
-.mini-loader { font-size: 12px; }
-.empty { color: #ccc; font-style: italic; }
+.monitor-container h1 {
+  color: #1f4a5f;
+  margin: 0 0 20px;
+  font-size: 1.6rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 50px;
+  color: #2d6178;
+  font-weight: 600;
+}
+
+.table-responsive {
+  background: #f7fbfd;
+  border: 1px solid rgba(39, 90, 111, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 8px 20px rgba(18, 53, 68, 0.06);
+  overflow: hidden;
+}
+
+.modern-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 12px;
+}
+
+.modern-table thead th {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: #6f8b94;
+  text-transform: uppercase;
+  font-weight: 700;
+  background: linear-gradient(180deg, rgba(46, 96, 119, 0.08), rgba(46, 96, 119, 0.03));
+}
+
+.modern-table tbody tr {
+  background: #f7fbfd;
+  border: 1px solid rgba(39, 90, 111, 0.10);
+  box-shadow: 0 6px 16px rgba(18, 53, 68, 0.04);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.modern-table tbody tr:hover {
+  transform: translateY(-2px);
+  background: #ffffff;
+  box-shadow: 0 10px 22px rgba(18, 53, 68, 0.08);
+}
+
+.modern-table td {
+  padding: 14px 16px;
+  border-bottom: 0;
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.price {
+  font-weight: 800;
+  color: #2f8f7f;
+}
+
+.ref-badge {
+  display: inline-flex;
+  align-items: center;
+  background: linear-gradient(180deg, #eaf6fb 0%, #dff0f6 100%);
+  color: #2f6f85;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-family: monospace;
+}
+
+.state-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #234e5b;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.action-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(18, 53, 68, 0.08);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.deliver-btn { background: linear-gradient(180deg, #2f8f7f 0%, #256e63 100%); color: white; }
+.cancel-btn { background: linear-gradient(180deg, #e27272 0%, #c14e4e 100%); color: white; }
+
+.mini-loader {
+  font-size: 13px;
+  color: #627c88;
+}
+
+.empty {
+  color: #9fb0b8;
+  font-style: italic;
+}
+
+@media (max-width: 900px) {
+  .monitor-container {
+    padding: 16px;
+  }
+
+  .modern-table thead {
+    display: none;
+  }
+
+  .modern-table,
+  .modern-table tbody,
+  .modern-table tr,
+  .modern-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .modern-table tbody tr {
+    margin-bottom: 12px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .modern-table td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+  }
+}
 </style>

@@ -149,50 +149,62 @@
   <div class="dashboard">
     <h1>Tableau de Bord</h1>
 
-    <div class="summary-cards">
-      <div class="card total-sales">
-        <div class="card-info">
-          <span class="label">Chiffre d'Affaires Total</span>
-          <div class="price-row">
-            <div class="price-item">
-              <span class="price-value">{{ totalRevenue }} €</span>
-              <span class="price-type">TTC</span>
-            </div>
-            <div class="price-item">
-              <span class="price-value">{{ totalRevenueHT }} €</span>
-              <span class="price-type">HT</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card total-orders">
-        <div class="card-info">
-          <span class="label">Commandes Totales</span>
-          <span class="value">{{ orders.length }}</span>
-        </div>
-      </div>
-
-      <div class="card paid-sales">
-        <div class="card-info">
-          <span class="label">Chiffre d'Affaires Payé</span>
-          <div class="price-row">
-            <div class="price-item">
-              <span class="price-value">{{ paidRevenue }} €</span>
-              <span class="price-type">TTC</span>
-            </div>
-            <div class="price-item">
-              <span class="price-value">{{ paidRevenueHT }} €</span>
-              <span class="price-type">HT</span>
+    <div class="kpi-panel">
+      <div class="summary-cards">
+        <div class="card total-sales">
+          <div class="card-info">
+            <span class="label">Chiffre d'Affaires Total</span>
+            <div class="price-row">
+              <div class="price-item">
+                <span class="price-value">{{ totalRevenue }} €</span>
+                <span class="price-type">TTC</span>
+              </div>
+              <div class="price-item">
+                <span class="price-value">{{ totalRevenueHT }} €</span>
+                <span class="price-type">HT</span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="card paid-orders">
-        <div class="card-info">
-          <span class="label">Commandes Payées</span>
-          <span class="value">{{ paidOrdersCount }}</span>
+        <div class="card total-orders">
+          <div class="card-info">
+            <span class="label">Commandes Totales</span>
+            <div class="price-row">
+              <div class="price-item single-metric">
+                <span class="price-value">{{ orders.length }}</span>
+                <span class="price-type">Commandes</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card paid-sales">
+          <div class="card-info">
+            <span class="label">Chiffre d'Affaires Payé</span>
+            <div class="price-row">
+              <div class="price-item">
+                <span class="price-value">{{ paidRevenue }} €</span>
+                <span class="price-type">TTC</span>
+              </div>
+              <div class="price-item">
+                <span class="price-value">{{ paidRevenueHT }} €</span>
+                <span class="price-type">HT</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card paid-orders">
+          <div class="card-info">
+            <span class="label">Commandes Payées</span>
+            <div class="price-row">
+              <div class="price-item single-metric">
+                <span class="price-value">{{ paidOrdersCount }}</span>
+                <span class="price-type">Payées</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -227,34 +239,80 @@
 </template>
 
 <style scoped>
-.dashboard { padding: 20px; background-color: #f4f7f6; min-height: 100vh; }
+.dashboard {
+  padding: 24px;
+  background: linear-gradient(180deg, #d7e6ee 0%, #c6dce7 100%);
+  min-height: 100vh;
+  border-radius: 14px;
+  border: 1px solid rgba(30, 72, 90, 0.16);
+}
+
+.dashboard h1 {
+  color: #1f4a5f;
+  padding-bottom: 12px;
+  margin-bottom: 26px;
+  font-size: clamp(1.5rem, 2vw, 2.1rem);
+  letter-spacing: 0.4px;
+}
+
+.dashboard h2 {
+  color: #26596f;
+  margin-bottom: 12px;
+}
 
 /* Styles des cartes */
-.summary-cards {
-  display: flex;
-  gap: 20px;
+.kpi-panel {
+  background: #eaf2f6;
+  border: 1px solid rgba(39, 90, 111, 0.14);
+  border-radius: 14px;
+  padding: 14px;
   margin-bottom: 30px;
 }
 
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 14px;
+}
+
 .card {
-  flex: 1;
-  background: white;
-  padding: 20px;
+  background: #f7fbfd;
+  padding: 16px;
   border-radius: 12px;
   display: flex;
   align-items: center;
-  gap: 20px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  gap: 14px;
+  border: 1px solid rgba(39, 90, 111, 0.16);
+  box-shadow: 0 2px 8px rgba(18, 53, 68, 0.05);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-info {
+  width: 100%;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(18, 53, 68, 0.12);
 }
 
 .card-icon { font-size: 2.5rem; }
-.label { display: block; color: #7f8c8d; font-size: 0.9rem; margin-bottom: 8px; }
-.value { font-size: 1.5rem; font-weight: bold; color: #2c3e50; }
+.label {
+  display: block;
+  color: #4d6a77;
+  font-size: 0.82rem;
+  margin-bottom: 7px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.value { font-size: 1.4rem; font-weight: 700; color: #224e63; }
 
 /* Affichage des prix TTC et HT côte à côte */
 .price-row {
   display: flex;
-  gap: 15px;
+  gap: 12px;
   align-items: center;
 }
 
@@ -264,52 +322,70 @@
   gap: 2px;
 }
 
+.single-metric {
+  min-width: 120px;
+}
+
 .price-value {
-  font-size: 1.3rem;
-  font-weight: bold;
-  color: #2c3e50;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e4b60;
 }
 
 .price-type {
-  font-size: 0.7rem;
-  color: #95a5a6;
+  font-size: 0.68rem;
+  color: #627c88;
   text-transform: uppercase;
 }
 
-.total-sales { border-left: 5px solid #2ecc71; }
-.total-orders { border-left: 5px solid #3498db; }
-.paid-sales { border-left: 5px solid #f39c12; }
-.paid-orders { border-left: 5px solid #9b59b6; }
+.total-sales,
+.total-orders,
+.paid-sales,
+.paid-orders {
+  border-left: 1px solid rgba(39, 90, 111, 0.16);
+}
 
 /* Styles du tableau journalier */
 .stats-section {
-  background: white;
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+  background: #edf5f9;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(39, 90, 111, 0.15);
+  box-shadow: 0 8px 20px rgba(20, 56, 70, 0.08);
 }
 
-.daily-stats-container { margin-top: 15px; }
+.daily-stats-container { margin-top: 20px; }
 
 .stats-header, .stats-row {
   display: flex;
-  padding: 12px 15px;
-  border-bottom: 1px solid #eee;
+  padding: 13px 14px;
+  border-bottom: 1px solid #d7e6ee;
 }
 
 .stats-header {
-  font-weight: bold;
-  color: #95a5a6;
+  font-weight: 600;
+  color: #eff8fc;
+  background: linear-gradient(180deg, #2d6178 0%, #3c7690 100%);
   text-transform: uppercase;
   font-size: 0.8rem;
+  border-radius: 10px 10px 0 0;
 }
 
-.col-date { flex: 2; font-weight: 500; }
+.stats-row {
+  transition: background 0.2s;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.stats-row:hover {
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.col-date { flex: 2; font-weight: 500; color: #2c3e50; }
 .col-count { flex: 1; text-align: center; }
-.col-amount { flex: 1.2; text-align: right; font-weight: bold; color: #2ecc71; }
+.col-amount { flex: 1.2; text-align: right; font-weight: 700; color: #23353c; }
 
 .col-amount.paid {
-  color: #3498db;
+  color: #22556e;
 }
 
 .ttc-label { 
@@ -320,12 +396,31 @@
 }
 
 .count-badge {
-  background: #ebf5fb;
-  color: #3498db;
-  padding: 2px 10px;
-  border-radius: 10px;
+  background: linear-gradient(180deg, #2e6077 0%, #3f7d97 100%);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 20px;
   font-size: 0.85rem;
+  font-weight: 600;
 }
 
-.loading { text-align: center; padding: 40px; color: #666; }
+.loading { text-align: center; padding: 40px; color: #2d6178; font-weight: 600; }
+
+@media (max-width: 1200px) {
+  .summary-cards {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-header,
+  .stats-row {
+    font-size: 0.78rem;
+    padding: 10px 8px;
+  }
+}
 </style>
